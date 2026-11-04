@@ -7,7 +7,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0e2a5a">
 <link rel="apple-touch-icon" href="icon-192.png">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>if(!window.supabase){document.write('<scr'+'ipt src="https://unpkg.com/@supabase/supabase-js@2"><\/scr'+'ipt>');}</script>
 <script>if(!window.supabase){document.write('<scr'+'ipt src="https://cdnjs.cloudflare.com/ajax/libs/supabase-js/2.39.3/supabase.min.js"><\/scr'+'ipt>');}</script>
@@ -270,9 +270,20 @@
     <div class="app-name">Registro de Jornada Laboral</div>
     <div id="modeBadge" style="text-align:center;font-size:11.5px;font-weight:700;margin:-4px 0 14px;padding:4px 10px;border-radius:999px"></div>
     <h1>Iniciar sesión</h1>
-    <div class="in-field"><label>Número de nómina</label><input id="lgUser" autocomplete="off" inputmode="numeric" placeholder="Ej. 10234" onkeydown="if(event.key==='Enter')doLogin()"></div>
+    <div class="in-field"><label>Número de nómina</label><input id="lgUser" autocomplete="off" inputmode="numeric" placeholder="Ej. 10234" onkeydown="if(event.key==='Enter')document.getElementById('lgPass').focus()"></div>
+    <div class="in-field"><label>Contraseña</label><input id="lgPass" type="password" autocomplete="current-password" placeholder="Tu contraseña" onkeydown="if(event.key==='Enter')doLogin()"></div>
     <button class="btn primary" onclick="doLogin()">Ingresar</button>
     <div class="login-err" id="lgErr"></div>
+
+    <!-- Cambio de contraseña obligatorio (primer ingreso) -->
+    <div id="cambioPass" style="display:none">
+      <h1>Cambia tu contraseña</h1>
+      <p style="font-size:13px;color:var(--gray);margin:-6px 0 14px">Es tu primer ingreso. Define una contraseña nueva (mínimo 6 caracteres).</p>
+      <div class="in-field"><label>Contraseña nueva</label><input id="cpNueva" type="password" autocomplete="new-password" placeholder="Nueva contraseña"></div>
+      <div class="in-field"><label>Repite la contraseña</label><input id="cpNueva2" type="password" autocomplete="new-password" placeholder="Repite la contraseña" onkeydown="if(event.key==='Enter')guardarCambioPassword()"></div>
+      <button class="btn primary" onclick="guardarCambioPassword()">Guardar y entrar</button>
+      <div class="login-err" id="cpErr"></div>
+    </div>
     <div class="demo-users" id="demoUsers">
       <b>Nóminas demo</b> (clic para autocompletar):<br>
       <span onclick="fill('10234')">10234</span> Roberto Meza · admin. · <b>con Panel</b> &nbsp;|&nbsp;
@@ -750,15 +761,27 @@ function avisoGuardado(que, error){
 let jornadaId = null;   // id de la jornada abierta hoy (LIVE)
 let lastLoginErr = null; // último error de validación (para diagnóstico)
 const DB = {
-  async loginByNomina(nom){
-    if(!SB_LIVE) return EMP.find(e=>e.nomina===nom && e.activo) || null;
-    const { data, error } = await sb.from('empleados').select('*')
-      .eq('numero_nomina', nom).eq('activo', true).maybeSingle();
+  async loginByNomina(nom, pass){
+    if(!SB_LIVE){
+      const e=EMP.find(x=>x.nomina===nom && x.activo);
+      if(!e) return null;
+      // demo: acepta la contraseña genérica o la propia nómina
+      if(pass && pass!=='Spie2026' && pass!==nom){ lastLoginErr='Contraseña incorrecta (en demo usa Spie2026).'; return null; }
+      return { ...e, numero_nomina:e.nomina, nombre:e.nombre, debeCambiar:false };
+    }
+    const { data, error } = await sb.rpc('fn_login_nomina', { p_nomina:nom, p_password:pass });
     if(error){ console.warn(error); lastLoginErr=error.message||('código '+(error.code||'?')); return null; }
-    // normaliza al shape que usa la app
-    return data ? { id:data.id, numero_nomina:data.numero_nomina, nombre:data.nombre_completo,
-      clas:data.clasificacion, supervisor:data.es_supervisor, es_rh:!!data.es_rh, supervisorId:data.supervisor_id||null, pais:data.pais,
-      estado:data.estado, zona_horaria:data.zona_horaria, activo:data.activo } : null;
+    const d = Array.isArray(data) ? data[0] : data;
+    if(!d) return null;
+    return { id:d.id, numero_nomina:d.numero_nomina, nombre:d.nombre_completo,
+      clas:d.clasificacion, supervisor:d.es_supervisor, es_rh:!!d.es_rh, supervisorId:d.supervisor_id||null, pais:d.pais,
+      estado:d.estado, zona_horaria:d.zona_horaria, activo:d.activo, debeCambiar:!!d.debe_cambiar };
+  },
+  async cambiarPassword(nom, actual, nueva){
+    if(!SB_LIVE) return true;
+    const { data, error } = await sb.rpc('fn_cambiar_password', { p_nomina:nom, p_actual:actual, p_nueva:nueva });
+    if(error){ console.warn(error); lastLoginErr=error.message; return false; }
+    return data===true;
   },
   async abrirJornada(reqAut){
     if(!SB_LIVE) return;
@@ -1179,20 +1202,50 @@ const ADMIN_NOMINAS = ['1326','1571','10234'];   // 10234 = Roberto en modo demo
 const RH_NOMINAS    = ['1410'];
 function rolDe(nom){ nom=String(nom||'').trim(); if(ADMIN_NOMINAS.includes(nom)) return 'admin'; if(RH_NOMINAS.includes(nom)) return 'rh'; return null; }
 function esRHNomina(nom){ return rolDe(nom)!==null; }   // Admin y RH gestionan todo por igual
+let _recPend=null;   // empleado validado en espera de cambiar su contraseña
 async function doLogin(){
   const nom=document.getElementById('lgUser').value.trim();
+  const pass=(document.getElementById('lgPass')||{}).value||'';
   if(!nom){ document.getElementById('lgErr').textContent='Escribe tu número de nómina.'; return; }
+  if(SB_LIVE && !pass){ document.getElementById('lgErr').textContent='Escribe tu contraseña.'; return; }
   document.getElementById('lgErr').textContent='Validando…';
   let rec=null; lastLoginErr=null;
-  try { rec = await DB.loginByNomina(nom); } catch(e){ console.warn(e); lastLoginErr=(e&&e.message)||'error inesperado'; }
+  try { rec = await DB.loginByNomina(nom, pass); } catch(e){ console.warn(e); lastLoginErr=(e&&e.message)||'error inesperado'; }
   if(!rec){
     const el=document.getElementById('lgErr');
-    if(!SB_LIVE) el.textContent='La app está en MODO DEMO: no se cargó Supabase (revisa tu conexión/que no se bloquee el script). En modo demo solo funcionan las nóminas de ejemplo.';
-    else if(lastLoginErr) el.textContent='Error al validar contra Supabase: '+lastLoginErr;
-    else el.textContent='Nómina no encontrada o dada de baja.';
+    if(!SB_LIVE && !EMP.find(x=>x.nomina===nom)) el.textContent='La app está en MODO DEMO: no se cargó Supabase. En demo solo funcionan las nóminas de ejemplo (contraseña: Spie2026).';
+    else if(lastLoginErr) el.textContent=lastLoginErr;
+    else el.textContent='Nómina o contraseña incorrecta.';
     return;
   }
   document.getElementById('lgErr').textContent='';
+  // primer ingreso: obligar a cambiar la contraseña antes de entrar
+  if(rec.debeCambiar){ _recPend=rec; mostrarCambioPassword(); return; }
+  entrarApp(rec);
+}
+function mostrarCambioPassword(){
+  document.getElementById('cambioPass').style.display='';
+  // oculta los campos de login y el botón/errores de arriba
+  ['lgUser','lgPass'].forEach(id=>{ const e=document.getElementById(id); if(e) e.closest('.in-field').style.display='none'; });
+  document.querySelector('.login-card h1').style.display='none';
+  document.querySelector('.login-card > .btn.primary').style.display='none';
+  document.getElementById('lgErr').style.display='none';
+  const du=document.getElementById('demoUsers'); if(du) du.style.display='none';
+  document.getElementById('cpNueva').focus();
+}
+async function guardarCambioPassword(){
+  const n1=document.getElementById('cpNueva').value, n2=document.getElementById('cpNueva2').value;
+  const err=document.getElementById('cpErr');
+  if(n1.length<6){ err.textContent='La contraseña debe tener al menos 6 caracteres.'; return; }
+  if(n1!==n2){ err.textContent='Las dos contraseñas no coinciden.'; return; }
+  err.textContent='Guardando…';
+  const actual=(document.getElementById('lgPass')||{}).value||'';
+  const ok=await DB.cambiarPassword(_recPend.numero_nomina||_recPend.nomina, actual, n1);
+  if(!ok){ err.textContent='No se pudo cambiar la contraseña. Intenta de nuevo.'; return; }
+  const rec={..._recPend, debeCambiar:false}; _recPend=null;
+  entrarApp(rec);
+}
+async function entrarApp(rec){
   U=rec;
   U.es_rh = U.es_rh || esRHNomina(U.numero_nomina||U.nomina);   // RH reconocido por nómina
   if(U.es_rh) U.supervisor = true;                               // RH también tiene acceso al panel
@@ -2602,23 +2655,26 @@ async function eliminarIncidencia(id){ await DB.deleteIncidencia(id); renderInc(
 
 /* ================= EXPORTAR A EXCEL (según filtros) ================= */
 async function exportExcel(){
-  if(typeof XLSX==='undefined'){ alert('No se pudo cargar la librería de Excel (revisa tu conexión a internet).'); return; }
-  let rows, sheet, fname;
+  if(typeof ExcelJS==='undefined'){ alert('No se pudo cargar la librería de Excel (revisa tu conexión a internet).'); return; }
+  let rows, sheet, fname, titulo, subtitulo, colMeta;
+  const genMsg='Generado el '+new Date().toLocaleString('es-MX');
   if(admView==='emp'){
-    sheet='Empleados';
+    sheet='Empleados'; titulo='SPIE · Empleados';
     rows=[['Nombre','Nómina','País','Clasificación','Supervisor','Rol RH','Estatus']];
     const est=document.getElementById('eEstado').value, pais=document.getElementById('ePais').value, q=norm(document.getElementById('eBuscar').value);
     visibleEmps().filter(e=>est==='todos'||(est==='activo'?e.activo:!e.activo)).filter(e=>!pais||e.pais===pais)
        .filter(e=>!q||norm(e.nombre).includes(q)||e.nomina.includes(q))
        .forEach(e=>rows.push([e.nombre,e.nomina,e.pais,(e.clas==='operativo'?'Operativo':'Administrativo'),e.supervisor?'Sí':'No',e.es_rh?'Sí':'No',e.activo?'Activo':'Baja']));
+    subtitulo=(pais?('País: '+pais+' · '):'')+genMsg;
+    colMeta=[{w:28},{w:11},{w:16},{w:15},{w:11},{w:9},{w:11}];
     fname='empleados.xlsx';
   } else {
-    sheet='Registros';
+    sheet='Registros'; titulo='SPIE · Registros de jornada';
     const fecha=document.getElementById('fFecha').value, tipo=document.getElementById('fTipo').value;
     rows=[['Empleado','Nómina','País','Clasificación','Fecha','Día','Estado',
       'Entrada','Inicio comida','Fin comida','Salida',
       'Entrada registró','Inicio comida registró','Fin comida registró','Salida registró',
-      'Horas laboradas (reales)','Tiempo extra','Resultado tiempo extra','Hora de salida con tiempo extra','Comentario tiempo extra',
+      'Horas laboradas (reales)','Tiempo extra (min)','Tiempo extra (horas)','Resultado tiempo extra','Hora de salida con tiempo extra','Comentario tiempo extra',
       'Técnico: horas en sitio','Traslado','Preparación/espera','Indisponibilidad','Cierre en sitio','Detalle etapas',
       'Requiere autorización','Estado autorización','Comentario autorización','Comentarios']];
     const autL={pendiente:'Pendiente',autorizada:'Autorizada',rechazada:'Rechazada'};
@@ -2627,7 +2683,8 @@ async function exportExcel(){
     const push=(e,rec,day,i)=>{
       const hr=horasReales(rec);
       const fz=k=>{ const v=(rec.fuente||{})[k]; return v==='sistema'?'Sistema':(v?'Usuario':'—'); };
-      const te = rec.otMin>0 ? (rec.otMin>=60 ? (rec.otMin/60).toFixed(1).replace(/\.0$/,'')+' h' : rec.otMin+' min') : '—';
+      const teMin   = rec.otMin>0 ? Math.round(rec.otMin) : 0;
+      const teHoras = rec.otMin>0 ? Number((rec.otMin/60).toFixed(2)) : 0;
       const teRes = rec.otMin>0 ? (rec.otEstado==='aprobado'?'Con horas extra aprobadas':rec.otEstado==='rechazado'?'Sin horas extra (rechazado)':'Pendiente de aprobación') : 'Sin tiempo extra';
       const salExtra = (rec.otMin>0 && rec.otEstado==='aprobado') ? rec.salida : '—';
       const tec = (rec.etapas&&rec.etapas.length);
@@ -2638,24 +2695,78 @@ async function exportExcel(){
       rows.push([e.nombre,e.nomina,e.pais,(e.clas==='operativo'?'Operativo':'Administrativo'),ymd(day),DIAS[i],ST_LBL[rec.status],
         rec.entrada,rec.iniComida,rec.finComida,rec.salida,
         fz('entrada'),fz('iniComida'),fz('finComida'),fz('salida'),
-        (hr!=null?Number(hr.toFixed(2)):''),te,teRes,salExtra,(rec.otComentario||''),
+        (hr!=null?Number(hr.toFixed(2)):''),teMin,teHoras,teRes,salExtra,(rec.otComentario||''),
         hSitio,mm(iv.traslado),mm(iv.preparacion),mm(iv.indisponibilidad||null),mm(iv.cierre),etDet,
         (rec.reqAut?'Sí':'No'),(rec.reqAut?(autL[rec.autEstado||'pendiente']||rec.autEstado):'—'),(rec.autComentario||''),
         rec.comments.map(c=>c.txt+' ('+c.by+')').join(' | ')]);
     };
+    const tipoTxt = tipo&&tipo!=='todos' ? ' · Tipo: '+tipo : '';
+    const paisF=document.getElementById('fPais'); const paisTxt = (paisF&&paisF.value)? ' · País: '+paisF.value : '';
     if(fecha){
       const d=new Date(fecha+'T00:00:00'), mon=mondayOfDate(d), idx=(d.getDay()+6)%7, data=await ensureWeek(mon);
       regEmployees().filter(e=>tipo==='todos'||data[e.id][idx][tipo]).forEach(e=>push(e,data[e.id][idx],d,idx));
+      subtitulo='Fecha: '+fecha+tipoTxt+paisTxt+' · '+genMsg;
       fname='registros_'+fecha+'.xlsx';
     } else {
-      const mon=mondayOf(curWeek), data=await ensureWeek(mon);
+      const mon=mondayOf(curWeek), sun=new Date(mon); sun.setDate(mon.getDate()+6);
+      const data=await ensureWeek(mon);
       regEmployees().forEach(e=>data[e.id].forEach((rec,i)=>{ if(rec.status==='pendiente')return; const day=new Date(mon); day.setDate(mon.getDate()+i); push(e,rec,day,i); }));
+      subtitulo='Semana del '+ymd(mon)+' al '+ymd(sun)+tipoTxt+paisTxt+' · '+genMsg;
       fname='registros_semana_'+ymd(mon)+'.xlsx';
     }
+    // anchos y formatos de las 31 columnas
+    colMeta=[{w:26},{w:11},{w:15},{w:14},{w:12},{w:7},{w:13},
+      {w:9},{w:12},{w:11},{w:9},
+      {w:15},{w:17},{w:17},{w:15},
+      {w:14,numFmt:'0.00'},{w:12,numFmt:'0'},{w:13,numFmt:'0.00'},{w:24},{w:20},{w:24},
+      {w:14,numFmt:'0.00'},{w:12},{w:16},{w:14},{w:13},{w:42},
+      {w:14},{w:16},{w:24},{w:30}];
   }
-  const ws=XLSX.utils.aoa_to_sheet(rows);
-  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,sheet);
-  XLSX.writeFile(wb,fname);
+  await descargarLibro(sheet, titulo, subtitulo, rows, colMeta, fname);
+}
+function _borde(){ const s={style:'thin',color:{argb:'FFD9DEE8'}}; return {top:s,left:s,right:s,bottom:s}; }
+async function descargarLibro(sheet, titulo, subtitulo, rows, colMeta, fname){
+  const AZUL='FF0E2A5A', AZULCLARO='FFF3F5FA';
+  const nCols=rows[0].length;
+  const wb=new ExcelJS.Workbook(); wb.creator='SPIE'; wb.created=new Date();
+  const ws=wb.addWorksheet(sheet, { views:[{state:'frozen', xSplit:2, ySplit:4}] });
+  // Título (fila 1)
+  ws.mergeCells(1,1,1,nCols);
+  const t=ws.getCell(1,1); t.value=titulo;
+  t.font={bold:true,size:14,color:{argb:'FFFFFFFF'}};
+  t.fill={type:'pattern',pattern:'solid',fgColor:{argb:AZUL}};
+  t.alignment={vertical:'middle',horizontal:'left',indent:1};
+  ws.getRow(1).height=26;
+  // Subtítulo (fila 2)
+  ws.mergeCells(2,1,2,nCols);
+  const s=ws.getCell(2,1); s.value=subtitulo||'';
+  s.font={italic:true,size:10,color:{argb:'FF64708A'}};
+  s.alignment={horizontal:'left',indent:1};
+  // Encabezados (fila 4)
+  const hdr=ws.getRow(4);
+  rows[0].forEach((h,i)=>{ const c=hdr.getCell(i+1); c.value=h;
+    c.font={bold:true,size:10,color:{argb:'FFFFFFFF'}};
+    c.fill={type:'pattern',pattern:'solid',fgColor:{argb:AZUL}};
+    c.alignment={vertical:'middle',horizontal:'center',wrapText:true};
+    c.border=_borde(); });
+  hdr.height=30;
+  // Datos (desde fila 5)
+  rows.slice(1).forEach((r,ri)=>{
+    const row=ws.getRow(5+ri);
+    r.forEach((v,ci)=>{ const c=row.getCell(ci+1); c.value=(v===''||v==null)?null:v;
+      c.alignment={vertical:'middle'}; c.border=_borde();
+      if(ri%2===1) c.fill={type:'pattern',pattern:'solid',fgColor:{argb:AZULCLARO}}; });
+  });
+  // Anchos + formatos de número
+  colMeta.forEach((m,i)=>{ const col=ws.getColumn(i+1); if(m.w) col.width=m.w; if(m.numFmt) col.numFmt=m.numFmt; });
+  // Filtro en la fila de encabezados
+  ws.autoFilter={ from:{row:4,column:1}, to:{row:4,column:nCols} };
+  // Descargar
+  const buf=await wb.xlsx.writeBuffer();
+  const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  const url=URL.createObjectURL(blob), a=document.createElement('a');
+  a.href=url; a.download=fname; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 1500);
 }
 </script>
 </body>
