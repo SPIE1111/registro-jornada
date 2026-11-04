@@ -274,6 +274,30 @@
     <div class="in-field"><label>Contraseña</label><input id="lgPass" type="password" autocomplete="current-password" placeholder="Tu contraseña" onkeydown="if(event.key==='Enter')doLogin()"></div>
     <button class="btn primary" onclick="doLogin()">Ingresar</button>
     <div class="login-err" id="lgErr"></div>
+    <div id="olvideWrap" style="text-align:center;margin-top:10px">
+      <a href="#" onclick="mostrarRecuperar();return false" style="font-size:13px;color:var(--blue);text-decoration:underline">¿Olvidaste tu contraseña?</a>
+    </div>
+
+    <!-- Recuperar contraseña: solicitar enlace por correo -->
+    <div id="recuperarPass" style="display:none">
+      <h1>Recuperar contraseña</h1>
+      <p style="font-size:13px;color:var(--gray);margin:-6px 0 14px">Escribe tu número de nómina y el correo que tienes registrado. Te enviaremos un enlace para restablecerla.</p>
+      <div class="in-field"><label>Número de nómina</label><input id="rcNomina" autocomplete="off" inputmode="numeric" placeholder="Ej. 10234"></div>
+      <div class="in-field"><label>Correo registrado</label><input id="rcCorreo" type="email" autocomplete="email" placeholder="tu.correo@spie-isw.com" onkeydown="if(event.key==='Enter')enviarRecuperacion()"></div>
+      <button class="btn primary" onclick="enviarRecuperacion()">Enviar enlace</button>
+      <button class="btn ghost" style="margin-top:8px" onclick="volverLogin()">Volver</button>
+      <div class="login-err" id="rcMsg"></div>
+    </div>
+
+    <!-- Definir nueva contraseña (al abrir el enlace del correo) -->
+    <div id="resetPass" style="display:none">
+      <h1>Nueva contraseña</h1>
+      <p style="font-size:13px;color:var(--gray);margin:-6px 0 14px">Define tu nueva contraseña (mínimo 6 caracteres).</p>
+      <div class="in-field"><label>Contraseña nueva</label><input id="rsNueva" type="password" autocomplete="new-password" placeholder="Nueva contraseña"></div>
+      <div class="in-field"><label>Repite la contraseña</label><input id="rsNueva2" type="password" autocomplete="new-password" placeholder="Repite la contraseña" onkeydown="if(event.key==='Enter')guardarReset()"></div>
+      <button class="btn primary" onclick="guardarReset()">Guardar contraseña</button>
+      <div class="login-err" id="rsMsg"></div>
+    </div>
 
     <!-- Cambio de contraseña obligatorio (primer ingreso) -->
     <div id="cambioPass" style="display:none">
@@ -674,6 +698,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
     else { b.textContent='● Modo demo (sin conexión a Supabase)'; b.style.background='var(--amber-bg)'; b.style.color='var(--amber)'; }
   }
   if(SB_LIVE){ const du=document.getElementById('demoUsers'); if(du) du.style.display='none'; }
+  // Si el usuario llegó desde el enlace del correo (?reset=token), muestra el formulario de nueva contraseña
+  try{ mostrarResetDesdeURL(); }catch(e){ console.warn(e); }
 });
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
@@ -780,6 +806,18 @@ const DB = {
   async cambiarPassword(nom, actual, nueva){
     if(!SB_LIVE) return true;
     const { data, error } = await sb.rpc('fn_cambiar_password', { p_nomina:nom, p_actual:actual, p_nueva:nueva });
+    if(error){ console.warn(error); lastLoginErr=error.message; return false; }
+    return data===true;
+  },
+  async solicitarReset(nom, correo){
+    if(!SB_LIVE) return true;
+    const { data, error } = await sb.rpc('fn_solicitar_reset', { p_nomina:nom, p_correo:correo });
+    if(error){ console.warn(error); lastLoginErr=error.message; return false; }
+    return data===true;
+  },
+  async confirmarReset(token, nueva){
+    if(!SB_LIVE) return true;
+    const { data, error } = await sb.rpc('fn_confirmar_reset', { p_token:token, p_nueva:nueva });
     if(error){ console.warn(error); lastLoginErr=error.message; return false; }
     return data===true;
   },
@@ -1244,6 +1282,58 @@ async function guardarCambioPassword(){
   if(!ok){ err.textContent='No se pudo cambiar la contraseña. Intenta de nuevo.'; return; }
   const rec={..._recPend, debeCambiar:false}; _recPend=null;
   entrarApp(rec);
+}
+let _resetToken=null;
+function _ocultarLoginCore(){
+  ['lgUser','lgPass'].forEach(id=>{ const e=document.getElementById(id); if(e) e.closest('.in-field').style.display='none'; });
+  const h1=document.querySelector('.login-card h1'); if(h1) h1.style.display='none';
+  const bp=document.querySelector('.login-card > .btn.primary'); if(bp) bp.style.display='none';
+  const le=document.getElementById('lgErr'); if(le) le.style.display='none';
+  const ow=document.getElementById('olvideWrap'); if(ow) ow.style.display='none';
+  const du=document.getElementById('demoUsers'); if(du) du.style.display='none';
+}
+function _mostrarLoginCore(){
+  ['lgUser','lgPass'].forEach(id=>{ const e=document.getElementById(id); if(e) e.closest('.in-field').style.display=''; });
+  const h1=document.querySelector('.login-card h1'); if(h1) h1.style.display='';
+  const bp=document.querySelector('.login-card > .btn.primary'); if(bp) bp.style.display='';
+  const le=document.getElementById('lgErr'); if(le){ le.style.display=''; le.textContent=''; }
+  const ow=document.getElementById('olvideWrap'); if(ow) ow.style.display='';
+}
+function mostrarRecuperar(){ _ocultarLoginCore(); document.getElementById('recuperarPass').style.display=''; document.getElementById('rcNomina').focus(); }
+function volverLogin(){
+  ['recuperarPass','resetPass','cambioPass'].forEach(id=>{ const e=document.getElementById(id); if(e) e.style.display='none'; });
+  _mostrarLoginCore();
+  if(location.search.indexOf('reset=')>=0){ history.replaceState(null,'',location.pathname); }
+}
+async function enviarRecuperacion(){
+  const nom=document.getElementById('rcNomina').value.trim();
+  const correo=document.getElementById('rcCorreo').value.trim();
+  const msg=document.getElementById('rcMsg');
+  if(!nom||!correo){ msg.style.color=''; msg.textContent='Escribe tu nómina y tu correo.'; return; }
+  msg.style.color=''; msg.textContent='Enviando…';
+  try{ await DB.solicitarReset(nom, correo); }catch(e){ console.warn(e); }
+  // Mensaje genérico (no revela si la combinación existe)
+  msg.style.color='var(--green)';
+  msg.textContent='Si la nómina y el correo coinciden, te enviamos un enlace para restablecer tu contraseña. Revisa tu correo (incluida la carpeta de no deseados).';
+}
+function mostrarResetDesdeURL(){
+  const tok=new URLSearchParams(location.search).get('reset');
+  if(!tok) return;
+  _resetToken=tok; _ocultarLoginCore();
+  document.getElementById('resetPass').style.display='';
+  setTimeout(()=>{ const e=document.getElementById('rsNueva'); if(e) e.focus(); }, 100);
+}
+async function guardarReset(){
+  const n1=document.getElementById('rsNueva').value, n2=document.getElementById('rsNueva2').value;
+  const msg=document.getElementById('rsMsg');
+  if(n1.length<6){ msg.style.color=''; msg.textContent='La contraseña debe tener al menos 6 caracteres.'; return; }
+  if(n1!==n2){ msg.style.color=''; msg.textContent='Las dos contraseñas no coinciden.'; return; }
+  msg.style.color=''; msg.textContent='Guardando…';
+  let ok=false; try{ ok=await DB.confirmarReset(_resetToken, n1); }catch(e){ console.warn(e); }
+  if(!ok){ msg.style.color=''; msg.textContent='El enlace no es válido o ya expiró. Solicita uno nuevo.'; return; }
+  msg.style.color='var(--green)';
+  msg.textContent='Contraseña actualizada. Ya puedes iniciar sesión.';
+  setTimeout(()=>{ volverLogin(); }, 1600);
 }
 async function entrarApp(rec){
   U=rec;
