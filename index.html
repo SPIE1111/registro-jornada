@@ -238,6 +238,7 @@
   .modal.form input,.modal.form select,.modal.form textarea{width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;color:var(--blue);background:var(--paper);font-family:inherit;margin:0}
   .modal.form .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   .muted-note{font-size:12px;color:var(--gray);background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:9px 11px;margin-top:8px}
+  .pend-badge{display:none;min-width:18px;height:18px;padding:0 5px;margin-left:6px;border-radius:999px;background:var(--red);color:#fff;font-size:11px;font-weight:800;line-height:18px;text-align:center;vertical-align:middle}
   /* ---- Ajustes para teléfono ---- */
   @media(max-width:700px){
     /* La barra superior se acomoda en varias filas; las pestañas pasan a su propia fila */
@@ -330,7 +331,7 @@
       </div>
       <div class="nav" id="nav" style="margin-left:10px;display:none">
         <button id="navJor" class="on" onclick="showView('jornada')">Mi jornada</button>
-        <button id="navAdm" onclick="showView('admin')">Panel de registros</button>
+        <button id="navAdm" onclick="showView('admin')">Panel de registros<span id="badgeNav" class="pend-badge"></span></button>
       </div>
       <div class="bar-right">
         <div class="geo" id="hGeo"></div>
@@ -396,7 +397,7 @@
         <h1 id="admTitle">Panel de registros</h1>
         <div class="nav" id="admSubNav" style="margin-left:6px">
           <button id="subReg" class="on" onclick="admSub('reg')">Registros</button>
-          <button id="subSol" onclick="admSub('sol')">Solicitudes</button>
+          <button id="subSol" onclick="admSub('sol')">Solicitudes<span id="badgeSol" class="pend-badge"></span></button>
           <button id="subInc" onclick="admSub('inc')">Incidencias</button>
           <button id="subEmp" onclick="admSub('emp')">Empleados</button>
           <button id="subFest" onclick="admSub('fest')">Festivos</button>
@@ -1129,6 +1130,17 @@ const DB = {
     const { error } = await sb.from('solicitudes').update({ estado:aprobada?'aprobada':'rechazada', comentario:comentario||null, resuelto_por:U?U.id:null, resuelto_en:new Date().toISOString() }).eq('id',id);
     if(error) console.warn('resolverSolicitud',error);
   },
+  async contarPendientes(empIds){
+    if(!SB_LIVE || !empIds || !empIds.length) return {sol:0, ot:0, aut:0, total:0};
+    const cuenta=async(tabla,campo,valor)=>{
+      try{ const { count } = await sb.from(tabla).select('*',{count:'exact',head:true}).in('empleado_id',empIds).eq(campo,valor); return count||0; }
+      catch(e){ console.warn('contarPendientes',e); return 0; }
+    };
+    const sol = await cuenta('solicitudes','estado','pendiente');
+    const ot  = await cuenta('jornadas','tiempo_extra_estado','pendiente');
+    const aut = await cuenta('jornadas','autorizacion_estado','pendiente');
+    return {sol, ot, aut, total:sol+ot+aut};
+  },
   async programarDiaLaborable(empId, fecha, nota){
     if(!SB_LIVE) return;
     const base={ empleado_id:empId, fecha, es_operativo:true };
@@ -1397,6 +1409,7 @@ function startApp(){
     autoRegistrarEntrada();
   }
   renderMisSolicitudes();
+  avisarSolicitudesResueltas();   // avisos de solicitudes aprobadas/rechazadas
   scheduleNotifs();
   updateAcc();
   initPush();            // registra el service worker y (si ya hay permiso) la suscripción
@@ -2043,6 +2056,18 @@ function addNotif(type,ic,txt){
   const d=document.createElement('div'); d.className='notif '+(type==='blue'?'':type);
   d.innerHTML=`<span class="ic2">${ic}</span><span>${txt}</span>`; box.prepend(d);
 }
+/* Avisa al empleado cuando una solicitud suya fue resuelta (solo las nuevas). */
+function avisarSolicitudesResueltas(){
+  if(!U) return;
+  let vistas=[]; try{ vistas=JSON.parse(localStorage.getItem('solVistas_'+U.id)||'[]'); }catch(e){}
+  const resueltas=(misSolicitudes||[]).filter(s=>s.estado==='aprobada'||s.estado==='rechazada');
+  resueltas.filter(s=>!vistas.includes(s.id)).slice(0,4).forEach(s=>{
+    const lbl=TIPO_SOL[s.tipo]||s.tipo;
+    if(s.estado==='aprobada') addNotif('green','✅','Tu solicitud de '+lbl+' fue aprobada'+(s.comentario?': '+s.comentario:'')+'.');
+    else addNotif('warn','⛔','Tu solicitud de '+lbl+' fue rechazada'+(s.comentario?': '+s.comentario:'')+'.');
+  });
+  try{ localStorage.setItem('solVistas_'+U.id, JSON.stringify(resueltas.map(s=>s.id))); }catch(e){}
+}
 
 /* ================= RELOJ ================= */
 function clockHTML(){
@@ -2117,6 +2142,16 @@ async function initAdmin(){
   if(SB_LIVE){ const list=await DB.cargarEmpleados(); if(list && list.length){ EMP=list; } }
   populatePaisSelects();
   aplicarRolPanel();
+  actualizarPendientes();
+}
+/* Indicador de aprobaciones pendientes para supervisor/RH (badges rojos) */
+function _setBadge(id,n){ const b=document.getElementById(id); if(!b)return; if(n>0){ b.textContent=n>99?'99+':n; b.style.display='inline-block'; } else { b.style.display='none'; } }
+async function actualizarPendientes(){
+  if(!(U && (U.supervisor || U.es_rh))) return;
+  let p={sol:0,ot:0,aut:0,total:0};
+  try{ const ids=visibleEmps().map(e=>e.id); p=await DB.contarPendientes(ids); }catch(e){ console.warn(e); }
+  _setBadge('badgeNav', p.total);
+  _setBadge('badgeSol', p.sol);
 }
 /* Todos los del panel (RH y supervisores) ven las mismas pestañas.
    La diferencia es el contenido: RH ve/edita a todos; el supervisor solo ve (sin editar) a su personal asignado.
@@ -2382,7 +2417,7 @@ function validarOt(aprob){
   rec.otEstado=aprob?'aprobado':'rechazado'; rec.otComentario=cmt;
   DB.validarTiempoExtra(rec.jornadaId, aprob, cmt);
   openDet(detCtx.empId,detCtx.weekKey,detCtx.dayIdx);
-  renderReg();
+  renderReg(); actualizarPendientes();
 }
 function autorizarDiaUI(aprob){
   if(!detCtx) return;
@@ -2391,7 +2426,7 @@ function autorizarDiaUI(aprob){
   rec.autEstado=aprob?'autorizada':'rechazada'; rec.autComentario=cmt;
   DB.autorizarDia(rec.jornadaId, aprob, cmt);
   openDet(detCtx.empId,detCtx.weekKey,detCtx.dayIdx);
-  renderReg();
+  renderReg(); actualizarPendientes();
 }
 function renderCmts(rec){
   const el=document.getElementById('detCmts');
@@ -2685,14 +2720,14 @@ async function aprobarSol(id){
   else if(s.tipo==='enfermedad'){ await DB.insertAusencia({empId:s.empId, ini:s.ini, fin:s.fin||s.ini, tipo:'incapacidad', nota:s.motivo||''}); }
   // notificación al teléfono del empleado (Etapa 2: push)
   enviarPush(s.empId, 'Tu solicitud de '+(TIPO_SOL[s.tipo]||s.tipo)+' fue APROBADA.');
-  adminStore={}; renderSol();
+  adminStore={}; renderSol(); actualizarPendientes();
 }
 async function rechazarSol(id){
   const s=solStore.find(x=>x.id===id); if(!s) return;
   const com=prompt('Motivo del rechazo (opcional):','')||'';
   await DB.resolverSolicitud(id, false, com);
   enviarPush(s.empId, 'Tu solicitud de '+(TIPO_SOL[s.tipo]||s.tipo)+' fue rechazada.');
-  renderSol();
+  renderSol(); actualizarPendientes();
 }
 /* Programar un día laborable (fin de semana / festivo) para alguien de tu personal */
 function abrirProgramarDia(){
