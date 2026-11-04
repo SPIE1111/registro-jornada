@@ -238,6 +238,27 @@
   .modal.form input,.modal.form select,.modal.form textarea{width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;color:var(--blue);background:var(--paper);font-family:inherit;margin:0}
   .modal.form .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   .muted-note{font-size:12px;color:var(--gray);background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:9px 11px;margin-top:8px}
+  /* ---- Ajustes para teléfono ---- */
+  @media(max-width:700px){
+    /* La barra superior se acomoda en varias filas; las pestañas pasan a su propia fila */
+    .bar-in{flex-wrap:wrap;row-gap:8px}
+    .bar-right{order:2;margin-left:auto}
+    #nav{order:3;flex:1 0 100%;margin-left:0!important;justify-content:center}
+    #nav button{flex:1}
+    /* Sub-navegación del panel (7 pestañas): se desliza en vez de desbordar */
+    #admSubNav{flex-wrap:nowrap;overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch}
+    #admSubNav button{flex:0 0 auto;white-space:nowrap}
+    .who b{font-size:14px}
+    #hDate{font-size:11px}
+    .geo{font-size:11px;line-height:1.25}
+    /* Formularios de dos columnas se apilan */
+    .noform .row{grid-template-columns:1fr}
+    .modal.form .row2{grid-template-columns:1fr}
+    /* Acciones del panel sin desbordar */
+    .admin-actions{margin-left:0;flex-wrap:wrap}
+    .admin-head{gap:10px}
+    .filters{gap:8px}
+  }
 </style>
 </head>
 <body>
