@@ -1,0 +1,14 @@
+{
+  "name": "Registro de Jornada SPIE",
+  "short_name": "Jornada",
+  "description": "Registro de jornada laboral",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0e2a5a",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
