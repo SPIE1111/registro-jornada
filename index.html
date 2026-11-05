@@ -1486,13 +1486,13 @@ function isUnlocked(step){
   const now=nowMin();
   switch(step.k){
     case 'inicio_jornada': return true;
-    case 'inicio_comida':  return checks.inicio_jornada && now>=comidaPlan();
-    case 'fin_comida':     return !!checks.inicio_jornada && (now>=comidaPlan() || !!checks.inicio_comida);
+    case 'inicio_comida':  return !!checks.inicio_jornada && now>=COMIDA_BASE;          // desde la 1:00 pm
+    case 'fin_comida':     return !!checks.inicio_jornada && (now>=COMIDA_BASE || !!checks.inicio_comida);
     case 'fin_jornada':    return !!checks.inicio_jornada && (!!checks.fin_comida || !!checks.inicio_comida);
   }
 }
 function unlockLabel(step){
-  if(step.k==='inicio_comida') return 'Se habilita a las '+fmt(comidaPlan())+' (según tu entrada).';
+  if(step.k==='inicio_comida') return 'Se habilita a la 1:00 pm.';
   if(step.k==='fin_comida')    return 'Se habilita al registrar el inicio de tu comida.';
   if(step.k==='fin_jornada')   return 'Se habilita al terminar tu comida.';
   return '';
