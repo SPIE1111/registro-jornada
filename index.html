@@ -317,6 +317,7 @@
       <span onclick="fill('20512')">20512</span> Luis Campos · campo
       <div style="margin-top:8px" id="demoNote">Modo demo: se valida contra la lista local. Con Supabase configurado, se valida contra la tabla <b>empleados</b> por número de nómina.</div>
     </div>
+    <div id="appVer" style="text-align:center;font-size:10px;color:var(--gray);margin-top:14px"></div>
   </div>
 </div>
 
@@ -708,9 +709,11 @@ document.addEventListener('DOMContentLoaded', ()=>{
     else { b.textContent='● Modo demo (sin conexión a Supabase)'; b.style.background='var(--amber-bg)'; b.style.color='var(--amber)'; }
   }
   if(SB_LIVE){ const du=document.getElementById('demoUsers'); if(du) du.style.display='none'; }
+  const av=document.getElementById('appVer'); if(av) av.textContent='Versión '+APP_VERSION;
   // Si el usuario llegó desde el enlace del correo (?reset=token), muestra el formulario de nueva contraseña
   try{ mostrarResetDesdeURL(); }catch(e){ console.warn(e); }
 });
+const APP_VERSION='v4 · 05-nov-2026 (Incidencias unificadas + comida 1pm)';
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
 function hoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
