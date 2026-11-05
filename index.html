@@ -332,6 +332,7 @@
       </div>
       <div class="nav" id="nav" style="margin-left:10px;display:none">
         <button id="navJor" class="on" onclick="showView('jornada')">Mi jornada</button>
+        <button id="navTec" onclick="showView('tecnico')" style="display:none">Jornada del técnico</button>
         <button id="navAdm" onclick="showView('admin')">Panel de registros<span id="badgeNav" class="pend-badge"></span></button>
       </div>
       <div class="bar-right">
@@ -359,18 +360,6 @@
           <button id="btnPush" class="btn ghost" style="width:100%;margin-top:8px;display:none" onclick="activarNotificaciones()">🔔 Activar notificaciones</button>
           <div id="misSolList" style="margin-top:12px"></div>
         </div>
-        <div class="card" id="descansoCard" style="display:none">
-          <h2>Descanso (campo)</h2>
-          <button class="descanso-cta" onclick="openDescanso()">＋ Registrar descanso</button>
-          <div id="descansoList"><div class="empty">Sin descansos registrados.</div></div>
-        </div>
-
-        <div class="card" id="tecnicoCard" style="display:none;margin-top:16px">
-          <h2>Jornada del técnico (reparación de palas)</h2>
-          <div id="etapasList"></div>
-          <div id="intervalosBox" style="margin-top:12px"></div>
-        </div>
-
         <div class="card" style="margin-top:16px">
           <h2>Horas laboradas · semana (<span id="metaHdr">48</span> h)</h2>
           <div class="meter-num"><span id="accHoras">0.0</span><small> / <span id="metaSmall">48</span> h</small></div>
@@ -391,6 +380,28 @@
 
   </div>
 
+  <!-- ============ JORNADA DEL TÉCNICO (CAMPO) ============ -->
+  <div class="wrap" id="viewTecnico" style="display:none">
+    <div class="grid">
+      <div class="card" style="min-height:420px">
+        <h2>Jornada del técnico (reparación de palas)</h2>
+        <p class="muted-note" style="margin:0 0 14px">Registra tus etapas del día en sitio. Esto es independiente de tu entrada, comida y salida.</p>
+        <div id="etapasList"></div>
+        <div id="intervalosBox" style="margin-top:12px"></div>
+        <div class="actions" style="margin-top:16px">
+          <button class="btn green" onclick="exportTecnicoMiDia()">⬇ Exportar mi jornada del técnico</button>
+        </div>
+      </div>
+      <div>
+        <div class="card" id="descansoCard">
+          <h2>Descansos</h2>
+          <button class="descanso-cta" onclick="openDescanso()">＋ Registrar descanso</button>
+          <div id="descansoList"><div class="empty">Sin descansos registrados.</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ============ PANEL DE REGISTROS (ADMIN) ============ -->
   <div class="wrap" id="viewAdmin" style="display:none">
     <div class="card">
@@ -407,6 +418,7 @@
         </div>
         <div class="admin-actions">
           <button class="btn green" onclick="exportExcel()">⬇ Exportar a Excel</button>
+          <button class="btn ghost" onclick="exportTecnicoPanel()">⬇ Jornada del técnico</button>
         </div>
       </div>
 
@@ -713,7 +725,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Si el usuario llegó desde el enlace del correo (?reset=token), muestra el formulario de nueva contraseña
   try{ mostrarResetDesdeURL(); }catch(e){ console.warn(e); }
 });
-const APP_VERSION='v4 · 05-nov-2026 (Incidencias unificadas + comida 1pm)';
+const APP_VERSION='v5 · 05-nov-2026 (Jornada del técnico como pestaña)';
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
 function hoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -1410,11 +1422,13 @@ function startApp(){
   const d=new Date();
   document.getElementById('hDate').textContent = d.toLocaleDateString('es-MX',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
   document.getElementById('hGeo').innerHTML = `<b>${U.pais} · ${U.estado}</b><br>Zona horaria: ${tz()}`;
-  document.getElementById('descansoCard').style.display = es_campo? 'block':'none';
-  document.getElementById('tecnicoCard').style.display = es_campo? 'block':'none';
   if(es_campo){ renderEtapas(); renderDescansoList(); }
-  // navegación: el Panel de registros es solo para usuarios autorizados (supervisor=true)
-  if(U.supervisor || U.es_rh){ document.getElementById('nav').style.display='flex'; initAdmin(); }
+  // navegación: "Jornada del técnico" para personal de campo; "Panel de registros" para supervisor/RH
+  const puedePanel = !!(U.supervisor || U.es_rh);
+  document.getElementById('navTec').style.display = es_campo? '' : 'none';
+  document.getElementById('navAdm').style.display = puedePanel? '' : 'none';
+  if(es_campo || puedePanel){ document.getElementById('nav').style.display='flex'; }
+  if(puedePanel){ initAdmin(); }
   buildFlow();
   // auto-registro de la entrada al abrir la app (si aún no se registró y es día laborable)
   if(!esVacaciones && !esAusencia && !esIncidencia && !checks.inicio_jornada && !jornadaCerrada){
@@ -1432,8 +1446,7 @@ function startApp(){
 /* ================= VACACIONES ================= */
 function toggleVacacion(on){
   esVacaciones=on;
-  document.getElementById('descansoCard').style.display = (es_campo && !on)? 'block':'none';
-  document.getElementById('tecnicoCard').style.display = (es_campo && !on)? 'block':'none';
+  const nt=document.getElementById('navTec'); if(nt) nt.style.display=(es_campo && !on)?'':'none';
   scheduleNotifs();
   render();
 }
@@ -2170,12 +2183,14 @@ async function actualizarPendientes(){
    El alta/edición/baja de empleados y la gestión de festivos solo la hace RH (se controla en cada render). */
 function aplicarRolPanel(){ /* sin ocultar pestañas: el alcance y los permisos se aplican por vista */ }
 function showView(v){
-  const jor=v==='jornada';
-  document.getElementById('viewJornada').style.display = jor?'block':'none';
-  document.getElementById('viewAdmin').style.display   = jor?'none':'block';
-  document.getElementById('navJor').classList.toggle('on',jor);
-  document.getElementById('navAdm').classList.toggle('on',!jor);
-  if(!jor) admSub(admView);
+  document.getElementById('viewJornada').style.display = v==='jornada'?'block':'none';
+  document.getElementById('viewTecnico').style.display = v==='tecnico'?'block':'none';
+  document.getElementById('viewAdmin').style.display   = v==='admin'?'block':'none';
+  document.getElementById('navJor').classList.toggle('on',v==='jornada');
+  const nt=document.getElementById('navTec'); if(nt) nt.classList.toggle('on',v==='tecnico');
+  document.getElementById('navAdm').classList.toggle('on',v==='admin');
+  if(v==='admin') admSub(admView);
+  if(v==='tecnico'){ renderEtapas(); renderDescansoList(); }
 }
 function admSub(which){
   admView=which;
@@ -2927,6 +2942,49 @@ async function descargarLibro(sheet, titulo, subtitulo, rows, colMeta, fname){
   const url=URL.createObjectURL(blob), a=document.createElement('a');
   a.href=url; a.download=fname; document.body.appendChild(a); a.click();
   setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 1500);
+}
+
+/* ===== EXPORTES DE LA JORNADA DEL TÉCNICO (registro independiente) ===== */
+const _NOM_ET={salida_casa:'Salida de casa',llegada_sitio:'Llegada a sitio',parada_turbina:'Parada de turbina',turbina_marcha:'Turbina en marcha',salida_sitio:'Salida de sitio'};
+const _ORD_ET=['salida_casa','llegada_sitio','parada_turbina','turbina_marcha','salida_sitio'];
+// El propio técnico exporta su jornada del día (etapas + descansos + tiempos)
+async function exportTecnicoMiDia(){
+  if(typeof ExcelJS==='undefined'){ alert('No se pudo cargar la librería de Excel (revisa tu conexión).'); return; }
+  const rows=[['Etapa','Hora','Descripción']];
+  etapas.slice().sort((a,b)=>(_ORD_ET.indexOf(a.k)-_ORD_ET.indexOf(b.k))||(a.orden-b.orden))
+    .forEach(e=>rows.push([(_NOM_ET[e.k]||e.k)+(e.orden?(' '+(e.orden+1)):''), fmt(e.min), e.desc||'']));
+  descansos.forEach((d,i)=>rows.push(['Descanso '+(i+1), fmt(d.ini)+' – '+fmt(d.fin), (d.dur||0)+' min']));
+  const iv=intervalos();
+  rows.push(['','','']);
+  rows.push(['Traslado', fmtDur(iv.traslado), '']);
+  rows.push(['Preparación / espera', fmtDur(iv.preparacion), '']);
+  rows.push(['Indisponibilidad', fmtDur(iv.indisponibilidad||null), '']);
+  rows.push(['Cierre en sitio', fmtDur(iv.cierre), '']);
+  rows.push(['Horas en sitio', fmtDur(horasEnSitioMin()), '']);
+  await descargarLibro('Técnico', 'SPIE · Jornada del técnico',
+    (U?U.nombre:'')+' · '+new Date().toLocaleDateString('es-MX'), rows,
+    [{w:26},{w:18},{w:50}], 'jornada_tecnico_'+hoyISO()+'.xlsx');
+}
+// El panel exporta la jornada del técnico de la semana (personal visible)
+async function exportTecnicoPanel(){
+  if(typeof ExcelJS==='undefined'){ alert('No se pudo cargar la librería de Excel (revisa tu conexión).'); return; }
+  const mm=m=> m==null?'':(Math.round(m)+' min');
+  const rows=[['Empleado','Nómina','País','Fecha','Día','Detalle etapas','Horas en sitio','Traslado','Preparación/espera','Indisponibilidad','Cierre en sitio']];
+  const mon=mondayOf(curWeek), sun=new Date(mon); sun.setDate(mon.getDate()+6);
+  const data=await ensureWeek(mon);
+  regEmployees().forEach(e=>data[e.id].forEach((rec,i)=>{
+    if(!(rec.etapas && rec.etapas.length)) return;
+    const day=new Date(mon); day.setDate(mon.getDate()+i);
+    const iv=recIntervalos(rec);
+    const etDet=rec.etapas.slice().sort((a,b)=>(_ORD_ET.indexOf(a.k)-_ORD_ET.indexOf(b.k))||(a.orden-b.orden))
+      .map(x=>fmt(x.min)+' '+(_NOM_ET[x.k]||x.k)+(x.orden?(' '+(x.orden+1)):'')+(x.desc?(': '+x.desc):'')).join(' | ');
+    rows.push([e.nombre,e.nomina,e.pais,ymd(day),DIAS[i],etDet,
+      Number((recHorasSitioMin(rec)/60).toFixed(2)), mm(iv.traslado),mm(iv.preparacion),mm(iv.indisponibilidad||null),mm(iv.cierre)]);
+  }));
+  await descargarLibro('Jornada del técnico','SPIE · Jornada del técnico',
+    'Semana del '+ymd(mon)+' al '+ymd(sun)+' · Generado el '+new Date().toLocaleString('es-MX'), rows,
+    [{w:26},{w:11},{w:15},{w:12},{w:7},{w:48},{w:14,numFmt:'0.00'},{w:12},{w:16},{w:14},{w:13}],
+    'jornada_tecnico_semana_'+ymd(mon)+'.xlsx');
 }
 </script>
 </body>
