@@ -205,7 +205,7 @@
   .cell{display:inline-flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;padding:4px 6px;border-radius:8px;min-width:56px}
   .cell:hover{background:var(--paper)}
   .st-dot{width:10px;height:10px;border-radius:50%}
-  .st-completo{background:var(--green)} .st-incompleto{background:var(--amber)} .st-vacaciones{background:var(--blue)} .st-pendiente{background:var(--line)} .st-descanso{background:var(--red)}
+  .st-completo{background:var(--green)} .st-incompleto{background:var(--amber)} .st-vacaciones{background:var(--blue)} .st-pendiente{background:var(--line)} .st-descanso{background:var(--red)} .st-ausencia{background:#8b5cf6}
   .cell .txt{font-size:10.5px;color:var(--gray)}
   .cell .cmt{font-size:11px}
   .lgd{display:flex;gap:16px;flex-wrap:wrap;margin:14px 2px 0;font-size:12px;color:var(--gray)}
@@ -398,10 +398,10 @@
         <div class="nav" id="admSubNav" style="margin-left:6px">
           <button id="subReg" class="on" onclick="admSub('reg')">Registros</button>
           <button id="subSol" onclick="admSub('sol')">Solicitudes<span id="badgeSol" class="pend-badge"></span></button>
-          <button id="subInc" onclick="admSub('inc')">Incidencias</button>
+          <button id="subInc" onclick="admSub('inc')" style="display:none">Incidencias</button>
           <button id="subEmp" onclick="admSub('emp')">Empleados</button>
           <button id="subFest" onclick="admSub('fest')">Festivos</button>
-          <button id="subAus" onclick="admSub('aus')">Ausencias</button>
+          <button id="subAus" onclick="admSub('aus')">Incidencias</button>
           <button id="subVac" onclick="admSub('vac')">Vacaciones</button>
         </div>
         <div class="admin-actions">
@@ -435,6 +435,7 @@
           <span><i class="st-dot st-completo"></i> Completo</span>
           <span><i class="st-dot st-incompleto"></i> Incompleto</span>
           <span><i class="st-dot st-vacaciones"></i> Vacaciones</span>
+          <span><i class="st-dot st-ausencia"></i> Ausencia / incidencia</span>
           <span><i class="st-dot st-pendiente"></i> Sin registro</span>
           <span>💬 Con comentario</span>
           <span>⏱ Tiempo extra</span>
@@ -522,13 +523,21 @@
             <input type="date" id="ausFin" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:10px"></div>
           <div><label class="fl-lbl" style="display:block;margin-bottom:4px">Tipo</label>
             <select id="ausTipo" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:10px">
-              <option value="ausencia">Ausencia</option><option value="permiso">Permiso</option>
-              <option value="incapacidad">Incapacidad</option><option value="otro">Otro</option></select></div>
+              <option value="falta_justificada">Falta justificada</option>
+              <option value="falta_injustificada">Falta injustificada</option>
+              <option value="suspension">Suspensión</option>
+              <option value="permiso_justificado">Permiso justificado</option>
+              <option value="permiso_injustificado">Permiso injustificado</option>
+              <option value="incapacidad">Incapacidad</option>
+              <option value="abandono">Abandono de trabajo</option>
+              <option value="disciplinaria">Medida disciplinaria</option>
+              <option value="ausencia">Ausencia</option>
+              <option value="otro">Otro</option></select></div>
           <div><label class="fl-lbl" style="display:block;margin-bottom:4px">Nota (opcional)</label>
             <input type="text" id="ausNota" placeholder="Detalle" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:10px"></div>
           <button class="btn primary" style="padding:9px 14px;width:auto" onclick="agregarAusencia()">＋ Registrar</button>
         </div>
-        <p class="muted-note" style="margin:0 0 10px">Las ausencias se muestran en el check del empleado en esas fechas. Si el día se trabaja de todos modos, el supervisor lo autoriza desde el detalle del día.</p>
+        <p class="muted-note" style="margin:0 0 10px">Aquí se registran ausencias e incidencias (faltas, suspensiones, permisos, incapacidades…). En esas fechas el empleado verá el día cubierto y <b>no se cuenta como trabajado</b>; además queda marcado en los registros.</p>
         <div class="tbl-wrap"><table class="reg" id="ausTbl"></table></div>
       </div>
 
@@ -2169,7 +2178,7 @@ function admSub(which){
   admView=which;
   const panes={reg:'paneReg',sol:'paneSol',inc:'paneInc',emp:'paneEmp',fest:'paneFest',aus:'paneAus',vac:'paneVac'};
   const subs ={reg:'subReg',sol:'subSol',inc:'subInc',emp:'subEmp',fest:'subFest',aus:'subAus',vac:'subVac'};
-  const titulos={reg:'Panel de registros',sol:'Solicitudes',inc:'Incidencias',emp:'Empleados',fest:'Festivos',aus:'Ausencias',vac:'Vacaciones'};
+  const titulos={reg:'Panel de registros',sol:'Solicitudes',inc:'Incidencias',emp:'Empleados',fest:'Festivos',aus:'Incidencias',vac:'Vacaciones'};
   Object.entries(panes).forEach(([k,id])=>{ const el=document.getElementById(id); if(el) el.style.display = (k===which)?'block':'none'; });
   Object.entries(subs ).forEach(([k,id])=>{ const el=document.getElementById(id); if(el) el.classList.toggle('on',k===which); });
   document.getElementById('admTitle').textContent = titulos[which]||'Panel';
@@ -2278,12 +2287,29 @@ function regEmployees(){
     .filter(e=>!q || norm(e.nombre).includes(q) || e.nomina.includes(q));
 }
 
+/* Cobertura de la semana: días con vacaciones o ausencia/incidencia (no cuentan).
+   Devuelve { empId: { 'YYYY-MM-DD': {tipo, label} } }. */
+async function coberturaSemana(mon){
+  const cov={};
+  const marca=(empId,ds,tipo,label)=>{ (cov[empId]=cov[empId]||{})[ds]={tipo,label}; };
+  const days=[]; for(let i=0;i<7;i++){ const dd=new Date(mon); dd.setDate(mon.getDate()+i); days.push(ymd(dd)); }
+  try{
+    const vac=await DB.cargarVacaciones();
+    (vac||[]).forEach(v=>days.forEach(ds=>{ if(ds>=v.ini && ds<=(v.fin||v.ini)) marca(v.empId,ds,'vacaciones','Vacaciones'); }));
+  }catch(e){ console.warn('cov vac',e); }
+  try{
+    const aus=await DB.cargarAusencias();
+    (aus||[]).forEach(a=>days.forEach(ds=>{ if(ds>=a.ini && ds<=(a.fin||a.ini)) marca(a.empId,ds,'ausencia',TIPO_AUS[a.tipo]||a.tipo); }));
+  }catch(e){ console.warn('cov aus',e); }
+  return cov;
+}
 async function renderReg(){
   const fecha=document.getElementById('fFecha').value;
   document.getElementById('wkNav').style.display = fecha?'none':'flex';
   if(fecha){ renderRegDay(fecha); return; }
   // ---- vista semanal ----
   const mon=mondayOf(curWeek); const data=await ensureWeek(mon);
+  const cov=await coberturaSemana(mon);
   const end=new Date(mon); end.setDate(mon.getDate()+6);
   document.getElementById('wkLbl').textContent =
     'Semana del '+mon.getDate()+' '+mon.toLocaleDateString('es-MX',{month:'short'})+' al '+end.getDate()+' '+end.toLocaleDateString('es-MX',{month:'short',year:'numeric'});
@@ -2301,6 +2327,12 @@ async function renderReg(){
     data[e.id].forEach((rec,i)=>{
       const dayDate=new Date(mon); dayDate.setDate(mon.getDate()+i); const dstr=ymd(dayDate);
       const esFest = festKey.has(e.pais+'|'+dstr);
+      // Prioridad: día cubierto por vacaciones/ausencia → marcado y no contabilizado
+      const marca = cov[e.id] && cov[e.id][dstr];
+      if(marca){
+        body+='<td><span class="cell" style="cursor:default" title="'+marca.label+' — no se cuenta como trabajado"><span class="st-dot st-'+(marca.tipo==='vacaciones'?'vacaciones':'ausencia')+'"></span><span class="txt">'+marca.label+'</span></span></td>';
+        return;
+      }
       const clickable = rec.status!=='pendiente';
       const cmt = rec.comments.length? '<span class="cmt">💬</span>':'';
       const otm = rec.otMin>0? '<span class="cmt" title="Tiempo extra: '+(rec.otEstado||'pendiente')+'">⏱</span>':'';
@@ -2593,7 +2625,7 @@ function fillEmpSelect(id){
   el.innerHTML = EMP.filter(e=>e.activo).sort((a,b)=>a.nombre.localeCompare(b.nombre))
     .map(e=>`<option value="${e.id}">${e.nombre} · ${e.nomina}</option>`).join('');
 }
-const TIPO_AUS={ausencia:'Ausencia',permiso:'Permiso',incapacidad:'Incapacidad',festivo:'Festivo',otro:'Otro'};
+const TIPO_AUS={falta_justificada:'Falta justificada',falta_injustificada:'Falta injustificada',suspension:'Suspensión',permiso_justificado:'Permiso justificado',permiso_injustificado:'Permiso injustificado',incapacidad:'Incapacidad',abandono:'Abandono de trabajo',disciplinaria:'Medida disciplinaria',ausencia:'Ausencia',permiso:'Permiso',festivo:'Festivo',otro:'Otro'};
 function fFecha(s){ if(!s) return ''; const d=new Date(s+'T00:00:00'); return d.toLocaleDateString('es-MX',{day:'2-digit',month:'short',year:'numeric'}); }
 
 /* ---- Festivos ---- */
