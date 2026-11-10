@@ -733,7 +733,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Si el usuario llegó desde el enlace del correo (?reset=token), muestra el formulario de nueva contraseña
   try{ mostrarResetDesdeURL(); }catch(e){ console.warn(e); }
 });
-const APP_VERSION='v7 · 10-nov-2026 (Filtro por tipo de registro · buscador de supervisor · rol RH solo admin · Excel seccionado)';
+const APP_VERSION='v8 · 10-nov-2026 (Salida fija 17:30 sin registro anticipado · solo tiempo extra)';
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
 function hoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -1243,6 +1243,7 @@ const PLAN_ENTRY = 8*60+30;   // 08:30
 const LIMITE_ENTRADA = 8*60+30; // 08:30 — después de esta hora el registro lo marca el sistema
 const COMIDA_BASE = 13*60;    // 13:00
 const JORNADA_SPAN = 9*60;    // 9 h (entrada -> salida planeada)
+const SALIDA_FIJA = 17*60+30; // 17:30 — hora de salida fija; se registra en automático
 const COMIDA_DUR = 60;        // duración planeada de comida
 
 /* ================= ESTADO ================= */
@@ -1292,7 +1293,7 @@ function tz(){ try{return Intl.DateTimeFormat().resolvedOptions().timeZone;}catc
 /* horarios adaptativos */
 function comidaPlan(){ return (T0!=null? T0 : PLAN_ENTRY) + (COMIDA_BASE - PLAN_ENTRY); }
 function finComidaPlan(){ return (comidaStart!=null? comidaStart : comidaPlan()) + COMIDA_DUR; }
-function salidaPlan(){ return (T0!=null? T0 : PLAN_ENTRY) + JORNADA_SPAN; }
+function salidaPlan(){ return SALIDA_FIJA; }   // salida fija 17:30
 
 /* ================= LOGIN ================= */
 function fill(n){ document.getElementById('lgUser').value=n; }
@@ -1768,13 +1769,20 @@ function postCheck(k,t){
 /* ---- check final / overtime ---- */
 function finalBlock(step){
   const now=nowMin();
-  const salida=salidaPlan();
-  const enTiempo = now<=salida+2;
-  return `<div class="yn">
-      <button class="yes" onclick="closeOnTime()">✓ Sí, termino a tiempo</button>
-      <button class="no" onclick="showOvertime()">Saldré más tarde</button></div>
+  const salida=SALIDA_FIJA;             // 17:30 fijo
+  const habilitado = now >= salida;     // el tiempo extra solo se registra a partir de las 17:30
+  return `<div class="planned" style="margin-bottom:12px;line-height:1.55">
+        Tu hora de salida es <b>${fmt(salida)}</b> y se registra <b>en automático</b>.
+        No es posible marcar la salida antes de esa hora.
+        ${habilitado
+          ? 'Si te quedarás más tiempo, regístralo abajo como <b>tiempo extra</b> (queda pendiente de aprobación de tu encargado).'
+          : 'Si te quedas después de las '+fmt(salida)+', aquí podrás registrar tu <b>tiempo extra</b>.'}
+      </div>
+      <div class="yn" style="grid-template-columns:1fr">
+        <button class="no" onclick="showOvertime()"${habilitado?'':' disabled style="opacity:.5;cursor:not-allowed"'}>⏱ Saldré más tarde (tiempo extra)</button>
+      </div>
       <div id="otSlot"></div>
-      <div class="planned" style="margin-top:14px">Hora actual: <b>${fmt(now)}</b> · ${enTiempo?'dentro del turno':'<span style="color:var(--red)">fuera del turno</span>'}</div>`;
+      <div class="planned" style="margin-top:14px">Hora actual: <b>${fmt(now)}</b>${habilitado?'':' · el registro de tiempo extra se habilita a las '+fmt(salida)}</div>`;
 }
 function closeOnTime(){
   const t=nowMin();
@@ -1783,23 +1791,26 @@ function closeOnTime(){
   finalizeJornada(t);
 }
 function showOvertime(){
-  const now=nowMin(); const salida=salidaPlan();
+  const now=nowMin(); const salida=SALIDA_FIJA;
+  if(now < salida){ alert('El tiempo extra se registra a partir de las '+fmt(salida)+'. Tu salida a esa hora se registra en automático.'); return; }
   const ot=Math.max(0, Math.round(now-salida));
   document.getElementById('otSlot').innerHTML = `<div class="ot-box">
-    <h3>⏱ Registro fuera de horario</h3>
-    <p>Vas a registrar tu salida después de tu horario. El tiempo adicional (aprox. <b>${ot} min</b>) se enviará a tu encargado para su autorización. El conteo de horas extra inicia únicamente cuando tu encargado lo aprueba.</p>
+    <h3>⏱ Registro de tiempo extra</h3>
+    <p>Tu salida normal de las <b>${fmt(salida)}</b> se registra sola. Aquí registras tu salida <b>posterior</b> a esa hora. El tiempo adicional (aprox. <b>${ot} min</b>) se enviará a tu encargado para su autorización. El conteo de horas extra inicia únicamente cuando tu encargado lo aprueba.</p>
     <label class="ot-check"><input type="checkbox" id="otOk" onchange="document.getElementById('otBtn').disabled=!this.checked">
       <span>Entiendo que este tiempo adicional queda <b>pendiente de aprobación</b> de mi encargado para poder contabilizarse.</span></label>
-    <div style="margin-top:12px"><label style="font-size:12.5px;font-weight:600">Hora real de salida</label>
-      <input type="time" id="otHora" value="${fmt(now)}" style="padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;width:160px;margin-top:4px"></div>
-    <button class="btn red" id="otBtn" disabled style="width:100%;margin-top:14px" onclick="closeOvertime()">Registrar salida</button>
+    <div style="margin-top:12px"><label style="font-size:12.5px;font-weight:600">Hora real de salida (posterior a ${fmt(salida)})</label>
+      <input type="time" id="otHora" value="${fmt(now)}" min="${fmt(salida)}" style="padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;width:160px;margin-top:4px"></div>
+    <button class="btn red" id="otBtn" disabled style="width:100%;margin-top:14px" onclick="closeOvertime()">Registrar salida con tiempo extra</button>
   </div>`;
 }
 function closeOvertime(){
-  const hv=document.getElementById('otHora').value.split(':');
-  const t=parseInt(hv[0])*60+parseInt(hv[1]);
+  const hv=(document.getElementById('otHora').value||'').split(':');
+  const t=parseInt(hv[0],10)*60+parseInt(hv[1],10);
+  if(isNaN(t)){ alert('Indica una hora de salida válida.'); return; }
+  if(t<=SALIDA_FIJA){ alert('El tiempo extra solo aplica después de las '+fmt(SALIDA_FIJA)+'. Tu salida a las '+fmt(SALIDA_FIJA)+' se registra en automático.'); return; }
   checks.fin_jornada={min:t, log:false, extra:true, por:'usuario'};
-  overtimeMin=Math.max(0, t-salidaPlan());
+  overtimeMin=Math.max(0, t-SALIDA_FIJA);
   finalizeJornada(t);
 }
 function finalizeJornada(t){
