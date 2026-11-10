@@ -684,12 +684,19 @@
 <!-- ============ MODAL (tramo de horas por proyecto) ============ -->
 <div id="ovEtapa" class="overlay hidden">
   <div class="modal">
-    <div class="mh" style="color:var(--blue)" id="etTitulo">Registrar etapa</div>
-    <p id="etAyuda" style="font-size:13px;color:var(--gray);margin:0 0 10px"></p>
-    <label>Hora</label>
-    <input type="time" id="etHora">
-    <label>Descripción de la actividad</label>
-    <textarea id="etDesc" rows="3" placeholder="Describe lo realizado, esperas, permisos o incidencias…" style="width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;font-family:inherit;font-size:14px;color:var(--blue);background:var(--paper)"></textarea>
+    <div class="mh" style="color:var(--blue)" id="etTitulo">Registrar tiempo</div>
+    <label>Tipo de tiempo</label>
+    <select id="etTipo" onchange="etToggleEtapaRep()" style="width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;color:var(--blue);background:var(--paper)"></select>
+    <div id="etRepWrap" style="display:none;margin-top:10px">
+      <label>Etapa de la reparación</label>
+      <select id="etRep" style="width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;color:var(--blue);background:var(--paper)"></select>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:10px">
+      <div style="flex:1"><label>Hora inicio</label><input type="time" id="etIni" style="width:100%"></div>
+      <div style="flex:1"><label>Hora fin</label><input type="time" id="etFin" style="width:100%"></div>
+    </div>
+    <label>Descripción (opcional)</label>
+    <textarea id="etDesc" rows="2" placeholder="Detalle de la actividad…" style="width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;font-family:inherit;font-size:14px;color:var(--blue);background:var(--paper)"></textarea>
     <div style="display:flex;gap:10px;margin-top:12px">
       <button class="btn ghost" style="flex:1" onclick="closeModal('ovEtapa')">Cancelar</button>
       <button class="btn primary" style="flex:1" onclick="saveEtapa()">Guardar</button>
@@ -725,7 +732,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Si el usuario llegó desde el enlace del correo (?reset=token), muestra el formulario de nueva contraseña
   try{ mostrarResetDesdeURL(); }catch(e){ console.warn(e); }
 });
-const APP_VERSION='v5 · 05-nov-2026 (Jornada del técnico como pestaña)';
+const APP_VERSION='v6 · 10-nov-2026 (Técnico: tipos de tiempo + etapa de reparación)';
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
 function hoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -894,25 +901,31 @@ const DB = {
   },
   async guardarEtapa(e){
     if(!SB_LIVE || !jornadaId) return;
-    // upsert por jornada + etapa + orden (para poder editar)
-    const row={ jornada_id:jornadaId, empleado_id:U.id, fecha:hoyISO(), etapa:e.k, orden:e.orden||0, hora:fmt(e.min), descripcion:e.desc||null };
-    const { data, error } = await sb.from('etapas_tecnico').upsert(row, { onConflict:'jornada_id,etapa,orden' }).select('id').maybeSingle();
-    if(error){ console.warn('guardarEtapa', error); avisoGuardado('la etapa del técnico', error); return; }
+    const row={ jornada_id:jornadaId, empleado_id:U.id, fecha:hoyISO(), etapa:e.tipo,
+      etapa_reparacion:e.etapaRep||null, orden:e.orden||0,
+      hora:fmt(e.ini), hora_fin:fmt(e.fin), minutos:e.min, descripcion:e.desc||null };
+    if(e.id){
+      const { error } = await sb.from('etapas_tecnico').update(row).eq('id', e.id);
+      if(error){ console.warn('guardarEtapa', error); avisoGuardado('la actividad del técnico', error); }
+      return;
+    }
+    const { data, error } = await sb.from('etapas_tecnico').insert(row).select('id').maybeSingle();
+    if(error){ console.warn('guardarEtapa', error); avisoGuardado('la actividad del técnico', error); return; }
     e.id = data && data.id;
   },
   async eliminarEtapa(e){
-    if(!SB_LIVE) return;
-    let q=sb.from('etapas_tecnico').delete();
-    if(e.id) q=q.eq('id',e.id); else q=q.eq('jornada_id',jornadaId).eq('etapa',e.k).eq('orden',e.orden||0);
-    const { error } = await q;
+    if(!SB_LIVE || !e.id) return;
+    const { error } = await sb.from('etapas_tecnico').delete().eq('id', e.id);
     if(error) console.warn('eliminarEtapa', error);
   },
   async cargarEtapasHoy(){
     if(!SB_LIVE || !jornadaId) return [];
-    const { data, error } = await sb.from('etapas_tecnico').select('id,etapa,orden,hora,descripcion').eq('jornada_id',jornadaId).order('orden');
+    const { data, error } = await sb.from('etapas_tecnico')
+      .select('id,etapa,etapa_reparacion,orden,hora,hora_fin,minutos,descripcion').eq('jornada_id',jornadaId).order('orden');
     if(error){ console.warn('cargarEtapasHoy', error); return []; }
-    return (data||[]).map(r=>{ const m=r.hora?(parseInt(r.hora.split(':')[0])*60+parseInt(r.hora.split(':')[1])):0;
-      return {id:r.id, k:r.etapa, orden:r.orden||0, min:m, desc:r.descripcion||''}; });
+    const toMin=h=>h?(parseInt(h.split(':')[0])*60+parseInt(h.split(':')[1])):0;
+    return (data||[]).map(r=>({ id:r.id, tipo:r.etapa, etapaRep:r.etapa_reparacion||'', orden:r.orden||0,
+      ini:toMin(r.hora), fin:toMin(r.hora_fin), min:(r.minutos!=null?r.minutos:Math.max(0,toMin(r.hora_fin)-toMin(r.hora))), desc:r.descripcion||'' }));
   },
   async cerrarJornada(rec){
     if(!SB_LIVE || !jornadaId) return;
@@ -975,13 +988,14 @@ const DB = {
     });
     // etapas de la jornada del técnico (personal de campo)
     try{
-      let qt=sb.from('etapas_tecnico').select('empleado_id,fecha,etapa,orden,hora,descripcion').gte('fecha', monISO).lte('fecha', sunISO); if(filtra) qt=qt.in('empleado_id',ids);
+      let qt=sb.from('etapas_tecnico').select('empleado_id,fecha,etapa,etapa_reparacion,orden,hora,hora_fin,minutos,descripcion').gte('fecha', monISO).lte('fecha', sunISO); if(filtra) qt=qt.in('empleado_id',ids);
       const { data:ets } = await qt;
+      const toMin=h=>h?(parseInt(h.split(':')[0])*60+parseInt(h.split(':')[1])):0;
       (ets||[]).forEach(et=>{ if(!data[et.empleado_id]) return;
         const d=new Date(et.fecha+'T00:00:00'); const idx=Math.round((d-mon)/86400000);
         if(idx<0||idx>6) return; const rec=data[et.empleado_id][idx];
-        const m=et.hora?(parseInt(et.hora.split(':')[0])*60+parseInt(et.hora.split(':')[1])):0;
-        (rec.etapas=rec.etapas||[]).push({k:et.etapa,orden:et.orden||0,min:m,desc:et.descripcion||''}); });
+        (rec.etapas=rec.etapas||[]).push({ tipo:et.etapa, etapaRep:et.etapa_reparacion||'', orden:et.orden||0,
+          ini:toMin(et.hora), fin:toMin(et.hora_fin), min:(et.minutos!=null?et.minutos:Math.max(0,toMin(et.hora_fin)-toMin(et.hora))), desc:et.descripcion||'' }); });
     }catch(e){ /* tabla etapas_tecnico aún no creada */ }
     return data;
   },
@@ -1239,14 +1253,26 @@ let checks={};                   // datos por check
 let descansos=[];
 let etapas=[];   // etapas de la jornada del técnico (personal de campo)
 let etCtx=null;  // etapa que se está registrando (k + orden)
-const ETAPAS_DEF=[
-  {k:'salida_casa',   n:'Salida de casa',    desc:'Comienza el traslado hacia el parque eólico.',  help:'Registra la hora de salida y cualquier incidencia.', icon:'🏠', unica:true},
-  {k:'llegada_sitio', n:'Llegada a sitio',   desc:'Arribo al parque eólico.',                       help:'Describe acceso, inducción, permisos o esperas.', icon:'📍', unica:true},
-  {k:'parada_turbina',n:'Parada de turbina', desc:'Comienza el periodo de indisponibilidad.',       help:'Actividad a realizar, bloqueo, preparación, acceso y condiciones de inicio.', icon:'🛑', unica:false},
-  {k:'turbina_marcha',n:'Turbina en marcha', desc:'Termina el periodo de indisponibilidad.',        help:'Describe reparación, inspección y pruebas hechas.', icon:'▶️', unica:false},
-  {k:'salida_sitio',  n:'Salida de sitio',   desc:'Finalizan las actividades en el parque.',        help:'Describe limpieza, retiro de equipo y cierre de permisos.', icon:'🚗', unica:true}
-];
-function etDef(k){ return ETAPAS_DEF.find(e=>e.k===k); }
+/* Tipos de tiempo de la jornada del técnico */
+const TIPOS_TEC={
+  efectivo_turbina:'Tiempo efectivo en turbina',
+  standby_clima:'Tiempo de stand by clima',
+  standby_cliente:'Tiempo de stand by cliente',
+  permisos_acceso:'Tiempo de permisos de acceso',
+  preparacion_tarea:'Preparación de la tarea'
+};
+/* Etapas de la reparación (solo para "Tiempo efectivo en turbina") */
+const ETAPAS_REP={
+  inspeccion:'Inspección', medicion:'Medición', evidencias:'Evidencias recolectadas',
+  inspeccion_invasiva:'Inspección invasiva', apertura_ventana:'Apertura de ventana',
+  identificacion_dano:'Identificación del daño', marcado_reposicion:'Marcado para reposición de telas',
+  escalonado:'Escalonado de telas', laminacion_te:'Laminación de telas (parte TE)',
+  trazado_shortcut:'Trazado para aplicación del nuevo short cut', corte_tela:'Corte de tela y consumibles',
+  pesaje_quimicos:'Pesaje de químicos', segunda_laminacion:'Segunda laminación', infusion:'Infusión',
+  postcurado:'Postcurado', prueba_conductividad:'Prueba de conductividad', aplicacion_filler:'Aplicación de filler',
+  topcoat_1:'Aplicación de top coat, 1ra mano', topcoat_2:'Aplicación de top coat, 2da mano',
+  desanclaje:'Desanclaje / descenso'
+};
 let overtimeMin=0, jornadaCerrada=false;
 let otEstadoHoy=null;            // 'pendiente' | 'aprobado' | 'rechazado' — ajusta las horas laboradas
 let autEstadoHoy=null;          // autorización del día (sábado/domingo/festivo): 'autorizada' | ...
@@ -1871,100 +1897,81 @@ function renderDescansoList(){
 }
 
 /* ================= JORNADA DEL TÉCNICO (CAMPO) ================= */
-function etapaDe(k,orden){ return etapas.find(e=>e.k===k && e.orden===(orden||0)); }
-function openEtapa(k,orden){
-  const d=etDef(k); if(!d) return;
-  etCtx={k, orden:orden||0};
-  const ex=etapaDe(k,orden||0);
-  document.getElementById('etTitulo').textContent=d.icon+' '+d.n+(d.unica?'':' '+((orden||0)+1));
-  document.getElementById('etAyuda').textContent=d.help;
-  document.getElementById('etHora').value=ex?fmt(ex.min):fmt(nowMin());
-  document.getElementById('etDesc').value=ex?ex.desc:'';
+function fmtDur(m){ if(m==null) return '—'; m=Math.round(m); const h=Math.floor(m/60), mm=m%60; return (h?h+' h ':'')+(mm?mm+' min':(h?'':'0 min')); }
+function etToggleEtapaRep(){
+  const t=document.getElementById('etTipo').value;
+  document.getElementById('etRepWrap').style.display = (t==='efectivo_turbina')? 'block':'none';
+}
+function openEtapa(id){
+  // llena los selects
+  const st=document.getElementById('etTipo');
+  st.innerHTML=Object.entries(TIPOS_TEC).map(([k,l])=>`<option value="${k}">${l}</option>`).join('');
+  const sr=document.getElementById('etRep');
+  sr.innerHTML='<option value="">— selecciona —</option>'+Object.entries(ETAPAS_REP).map(([k,l])=>`<option value="${k}">${l}</option>`).join('');
+  const ex = id? etapas.find(e=>e.id===id || e._cid===id) : null;
+  etCtx = ex? {id: ex.id||ex._cid} : {id:null};
+  st.value = ex? ex.tipo : 'efectivo_turbina';
+  sr.value = ex? (ex.etapaRep||'') : '';
+  document.getElementById('etIni').value = ex? fmt(ex.ini) : fmt(nowMin());
+  document.getElementById('etFin').value = (ex && ex.fin!=null)? fmt(ex.fin) : '';
+  document.getElementById('etDesc').value = ex? (ex.desc||'') : '';
+  document.getElementById('etTitulo').textContent = ex? 'Editar tiempo' : 'Registrar tiempo';
+  etToggleEtapaRep();
   document.getElementById('ovEtapa').classList.remove('hidden');
 }
 function saveEtapa(){
-  if(!etCtx) return;
-  const hv=document.getElementById('etHora').value;
+  const tipo=document.getElementById('etTipo').value;
+  const etapaRep=(tipo==='efectivo_turbina')? document.getElementById('etRep').value : '';
+  const iv=document.getElementById('etIni').value, fv=document.getElementById('etFin').value;
   const desc=document.getElementById('etDesc').value.trim();
-  if(!hv){ alert('Indica la hora.'); return; }
-  const min=parseInt(hv.split(':')[0])*60+parseInt(hv.split(':')[1]);
-  let e=etapaDe(etCtx.k, etCtx.orden);
-  if(e){ e.min=min; e.desc=desc; }
-  else { e={k:etCtx.k, orden:etCtx.orden, min, desc}; etapas.push(e); }
+  if(!iv || !fv){ alert('Indica la hora de inicio y de fin.'); return; }
+  if(tipo==='efectivo_turbina' && !etapaRep){ alert('Selecciona la etapa de la reparación.'); return; }
+  const ini=parseInt(iv.split(':')[0])*60+parseInt(iv.split(':')[1]);
+  const fin=parseInt(fv.split(':')[0])*60+parseInt(fv.split(':')[1]);
+  if(fin<=ini){ alert('La hora de fin debe ser posterior a la de inicio.'); return; }
+  const min=fin-ini;
+  let e = etCtx && etCtx.id ? etapas.find(x=>(x.id||x._cid)===etCtx.id) : null;
+  if(e){ e.tipo=tipo; e.etapaRep=etapaRep; e.ini=ini; e.fin=fin; e.min=min; e.desc=desc; }
+  else {
+    const orden = etapas.length? Math.max(...etapas.map(x=>x.orden||0))+1 : 0;
+    e={ _cid:'c'+Date.now(), tipo, etapaRep, ini, fin, min, desc, orden };
+    etapas.push(e);
+  }
   DB.guardarEtapa(e);
   closeModal('ovEtapa'); renderEtapas(); updateAcc();
   if(view==='valid'||view==='resumen') render();
 }
-function eliminarEtapa(k,orden){
-  const e=etapaDe(k,orden); if(!e) return;
-  etapas=etapas.filter(x=>!(x.k===k && x.orden===orden));
+function eliminarEtapa(id){
+  const e=etapas.find(x=>(x.id||x._cid)===id); if(!e) return;
+  etapas=etapas.filter(x=>(x.id||x._cid)!==id);
   DB.eliminarEtapa(e); renderEtapas(); updateAcc();
   if(view==='valid'||view==='resumen') render();
 }
-function agregarParadaArranque(){
-  // agrega el siguiente par parada/arranque (orden incremental)
-  const ordenes=etapas.filter(e=>e.k==='parada_turbina').map(e=>e.orden);
-  const next=ordenes.length? Math.max(...ordenes)+1 : 1;
-  openEtapa('parada_turbina', next);
+/* total de minutos por tipo de tiempo */
+function totalesPorTipo(lista){
+  const t={}; (lista||etapas).forEach(e=>{ t[e.tipo]=(t[e.tipo]||0)+(e.min||0); }); return t;
 }
-function paresIndisponibilidad(){
-  const paradas=etapas.filter(e=>e.k==='parada_turbina').sort((a,b)=>a.orden-b.orden);
-  let tot=0; paradas.forEach(p=>{ const m=etapaDe('turbina_marcha',p.orden); if(m && m.min>p.min) tot+=(m.min-p.min); });
-  return tot;
-}
-function intervalos(){
-  const sc=etapaDe('salida_casa',0), ls=etapaDe('llegada_sitio',0), ss=etapaDe('salida_sitio',0);
-  const paradas=etapas.filter(e=>e.k==='parada_turbina').sort((a,b)=>a.orden-b.orden);
-  const marchas=etapas.filter(e=>e.k==='turbina_marcha').sort((a,b)=>a.orden-b.orden);
-  const prim=paradas[0], ult=marchas.length?marchas[marchas.length-1]:null;
-  return {
-    traslado: (sc&&ls&&ls.min>sc.min)? ls.min-sc.min : null,
-    preparacion: (ls&&prim&&prim.min>ls.min)? prim.min-ls.min : null,
-    indisponibilidad: paresIndisponibilidad(),
-    cierre: (ult&&ss&&ss.min>ult.min)? ss.min-ult.min : null
-  };
-}
-function horasEnSitioMin(){ const ls=etapaDe('llegada_sitio',0), ss=etapaDe('salida_sitio',0); return (ls&&ss&&ss.min>ls.min)? ss.min-ls.min : 0; }
-function fmtDur(m){ if(m==null) return '—'; const h=Math.floor(m/60), mm=m%60; return (h?h+' h ':'')+(mm?mm+' min':(h?'':'0 min')); }
 function renderEtapas(){
   const el=document.getElementById('etapasList'); if(!el) return;
-  let html='';
-  ETAPAS_DEF.forEach(d=>{
-    if(d.k==='turbina_marcha') return; // se dibuja junto a su parada
-    if(d.k==='parada_turbina'){
-      const paradas=etapas.filter(e=>e.k==='parada_turbina').sort((a,b)=>a.orden-b.orden);
-      const lista = paradas.length? paradas : [{orden:0,_vacio:true}];
-      lista.forEach(p=>{
-        html+=etapaRow(etDef('parada_turbina'), p.orden, p._vacio?null:p);
-        const m=etapaDe('turbina_marcha',p.orden);
-        html+=etapaRow(etDef('turbina_marcha'), p.orden, m||null);
-      });
-      return;
-    }
-    html+=etapaRow(d, 0, etapaDe(d.k,0));
-  });
-  html+='<button class="descanso-cta" style="margin-top:10px" onclick="agregarParadaArranque()">＋ Registrar otra parada / arranque</button>';
-  el.innerHTML=html;
-  // intervalos
-  const iv=intervalos();
-  document.getElementById('intervalosBox').innerHTML=
-    '<div style="font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--gray);font-weight:700;margin-bottom:6px">Tiempos</div>'+
-    '<div class="lg"><span>Traslado</span><b>'+fmtDur(iv.traslado)+'</b></div>'+
-    '<div class="lg"><span>Preparación / espera</span><b>'+fmtDur(iv.preparacion)+'</b></div>'+
-    '<div class="lg"><span>Indisponibilidad</span><b>'+fmtDur(iv.indisponibilidad||null)+'</b></div>'+
-    '<div class="lg"><span>Cierre en sitio</span><b>'+fmtDur(iv.cierre)+'</b></div>';
-}
-function etapaRow(d, orden, e){
-  const titulo=d.n+(d.unica?'':' '+(orden+1));
-  if(e){
-    return '<div class="hist-item" style="padding:9px 11px"><div class="ic prog">'+d.icon+'</div>'+
-      '<div class="info"><b>'+titulo+'</b><span>'+(e.desc?e.desc:'<i>sin descripción</i>')+'</span></div>'+
-      '<div class="tm">'+fmt(e.min)+' <button class="mini" style="margin-left:4px;padding:2px 7px" onclick="openEtapa(\''+d.k+'\','+orden+')">✎</button>'+
-      (d.unica&&orden===0?'':' <button class="mini red" style="padding:2px 7px" onclick="eliminarEtapa(\''+d.k+'\','+orden+')">✕</button>')+'</div></div>';
+  let html='<button class="btn primary" style="width:100%;margin-bottom:10px" onclick="openEtapa(null)">＋ Registrar tiempo</button>';
+  if(!etapas.length){
+    html+='<div class="empty">Aún no registras tiempos. Usa "Registrar tiempo" para capturar tu actividad en sitio.</div>';
+  } else {
+    etapas.slice().sort((a,b)=>(a.ini||0)-(b.ini||0)).forEach(e=>{
+      const id=e.id||e._cid;
+      const sub = (e.tipo==='efectivo_turbina' && e.etapaRep)? (ETAPAS_REP[e.etapaRep]||e.etapaRep) : (e.desc||'');
+      html+='<div class="hist-item" style="padding:9px 11px"><div class="ic prog">🛠️</div>'+
+        '<div class="info"><b>'+(TIPOS_TEC[e.tipo]||e.tipo)+'</b><span>'+fmt(e.ini)+' – '+fmt(e.fin)+(sub?(' · '+sub):'')+'</span></div>'+
+        '<div class="tm">'+fmtDur(e.min)+' <button class="mini" style="margin-left:4px;padding:2px 7px" onclick="openEtapa(\''+id+'\')">✎</button>'+
+        ' <button class="mini red" style="padding:2px 7px" onclick="eliminarEtapa(\''+id+'\')">✕</button></div></div>';
+    });
   }
-  return '<div class="hist-item" style="padding:9px 11px;opacity:.85"><div class="ic" style="background:var(--line);color:var(--gray)">'+d.icon+'</div>'+
-    '<div class="info"><b>'+titulo+'</b><span style="color:var(--gray)">'+d.desc+'</span></div>'+
-    '<div class="tm"><button class="btn primary" style="padding:6px 12px;font-size:12.5px" onclick="openEtapa(\''+d.k+'\','+orden+')">Registrar</button></div></div>';
+  el.innerHTML=html;
+  // resumen por tipo
+  const tot=totalesPorTipo();
+  document.getElementById('intervalosBox').innerHTML=
+    '<div style="font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--gray);font-weight:700;margin-bottom:6px">Tiempos por tipo</div>'+
+    Object.keys(TIPOS_TEC).map(k=>'<div class="lg"><span>'+TIPOS_TEC[k]+'</span><b>'+fmtDur(tot[k]||null)+'</b></div>').join('');
 }
 function closeModal(id){ document.getElementById(id).classList.add('hidden'); }
 
@@ -2007,10 +2014,7 @@ async function cargarAcumuladoPrevio(){
 }
 function accValues(){
   let ot=overtimeMin/60, baseDia=0;
-  if(es_campo && etapaDe('llegada_sitio',0) && etapaDe('salida_sitio',0)){
-    // personal de campo (técnico): horas en sitio = llegada a sitio → salida de sitio
-    baseDia = horasEnSitioMin()/60;
-  } else if(T0!=null && checks.fin_jornada){
+  if(T0!=null && checks.fin_jornada){
     const salida=Math.min(checks.fin_jornada.min, salidaPlan()); // sin extra
     const bruto=Math.max(0, salida - T0);
     const comida = (comidaStart!=null && comidaEnd!=null)? (comidaEnd-comidaStart) : (checks.inicio_comida?COMIDA_DUR:0);
@@ -2220,19 +2224,10 @@ function mondayOfDate(d){ const x=new Date(d); x.setHours(0,0,0,0); const dow=(x
 function ymd(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function hhmmToMin(s){ if(!s) return null; const p=String(s).split(':'); const m=parseInt(p[0],10)*60+parseInt(p[1],10); return isNaN(m)?null:m; }
 /* horas laboradas reales del día: (salida − entrada − comida), y el tiempo extra solo cuenta si fue APROBADO */
-function recEtapa(rec,k,orden){ return (rec.etapas||[]).find(e=>e.k===k && e.orden===(orden||0)); }
-function recHorasSitioMin(rec){ const ls=recEtapa(rec,'llegada_sitio',0), ss=recEtapa(rec,'salida_sitio',0); return (ls&&ss&&ss.min>ls.min)?(ss.min-ls.min):0; }
-function recIntervalos(rec){
-  const sc=recEtapa(rec,'salida_casa',0), ls=recEtapa(rec,'llegada_sitio',0), ss=recEtapa(rec,'salida_sitio',0);
-  const paradas=(rec.etapas||[]).filter(e=>e.k==='parada_turbina').sort((a,b)=>a.orden-b.orden);
-  const marchas=(rec.etapas||[]).filter(e=>e.k==='turbina_marcha').sort((a,b)=>a.orden-b.orden);
-  let indisp=0; paradas.forEach(p=>{ const m=(rec.etapas||[]).find(e=>e.k==='turbina_marcha'&&e.orden===p.orden); if(m&&m.min>p.min) indisp+=(m.min-p.min); });
-  const prim=paradas[0], ult=marchas.length?marchas[marchas.length-1]:null;
-  return { traslado:(sc&&ls&&ls.min>sc.min)?ls.min-sc.min:null, preparacion:(ls&&prim&&prim.min>ls.min)?prim.min-ls.min:null, indisponibilidad:indisp, cierre:(ult&&ss&&ss.min>ult.min)?ss.min-ult.min:null };
-}
+/* totales de minutos por tipo de tiempo del técnico, para un registro del panel */
+function recTotalesPorTipo(rec){ const t={}; (rec.etapas||[]).forEach(e=>{ t[e.tipo]=(t[e.tipo]||0)+(e.min||0); }); return t; }
 function horasReales(rec){
-  // personal de campo (técnico): horas en sitio = llegada a sitio → salida de sitio
-  if(rec.etapas && rec.etapas.length && recEtapa(rec,'llegada_sitio',0) && recEtapa(rec,'salida_sitio',0)) return recHorasSitioMin(rec)/60;
+  // horas laboradas = salida − entrada − comida (la jornada del técnico es un registro aparte)
   const ent=hhmmToMin(rec.entrada), sal=hhmmToMin(rec.salida);
   if(ent==null||sal==null) return null;
   let min=sal-ent;
@@ -2445,16 +2440,12 @@ function openDet(empId,weekKey,dayIdx){
     }
   }
   if(rec.etapas && rec.etapas.length){
-    const nom={salida_casa:'Salida de casa',llegada_sitio:'Llegada a sitio',parada_turbina:'Parada de turbina',turbina_marcha:'Turbina en marcha',salida_sitio:'Salida de sitio'};
-    const ord=['salida_casa','llegada_sitio','parada_turbina','turbina_marcha','salida_sitio'];
-    const lista=rec.etapas.slice().sort((a,b)=> (ord.indexOf(a.k)-ord.indexOf(b.k)) || (a.orden-b.orden));
+    const lista=rec.etapas.slice().sort((a,b)=>(a.ini||0)-(b.ini||0));
     h+='<div class="det-row" style="margin-top:10px;border-top:1px solid var(--line);padding-top:12px"><span>🛠️ Jornada del técnico</span></div>';
-    lista.forEach(e=>{ h+='<div class="det-row"><span>'+fmt(e.min)+' · '+(nom[e.k]||e.k)+(e.orden?(' '+(e.orden+1)):'')+(e.desc?(' — '+e.desc):'')+'</span></div>'; });
-    const iv=recIntervalos(rec);
-    h+='<div class="det-row"><span><b>Traslado</b></span><span class="tm">'+fmtDur(iv.traslado)+'</span></div>';
-    h+='<div class="det-row"><span><b>Preparación / espera</b></span><span class="tm">'+fmtDur(iv.preparacion)+'</span></div>';
-    h+='<div class="det-row"><span><b>Indisponibilidad</b></span><span class="tm">'+fmtDur(iv.indisponibilidad||null)+'</span></div>';
-    h+='<div class="det-row"><span><b>Cierre en sitio</b></span><span class="tm">'+fmtDur(iv.cierre)+'</span></div>';
+    lista.forEach(e=>{ const sub=(e.tipo==='efectivo_turbina'&&e.etapaRep)?(ETAPAS_REP[e.etapaRep]||e.etapaRep):(e.desc||'');
+      h+='<div class="det-row"><span>'+fmt(e.ini)+'–'+fmt(e.fin)+' · '+(TIPOS_TEC[e.tipo]||e.tipo)+(sub?(' — '+sub):'')+'</span><span class="tm">'+fmtDur(e.min)+'</span></div>'; });
+    const tot=recTotalesPorTipo(rec);
+    Object.keys(TIPOS_TEC).forEach(k=>{ if(tot[k]) h+='<div class="det-row"><span><b>'+TIPOS_TEC[k]+'</b></span><span class="tm">'+fmtDur(tot[k])+'</span></div>'; });
   }
   document.getElementById('detChecks').innerHTML=h;
   renderCmts(rec); document.getElementById('detNewCmt').value='';
@@ -2850,11 +2841,8 @@ async function exportExcel(){
       'Entrada','Inicio comida','Fin comida','Salida',
       'Entrada registró','Inicio comida registró','Fin comida registró','Salida registró',
       'Horas laboradas (reales)','Tiempo extra (min)','Tiempo extra (horas)','Resultado tiempo extra','Hora de salida con tiempo extra','Comentario tiempo extra',
-      'Técnico: horas en sitio','Traslado','Preparación/espera','Indisponibilidad','Cierre en sitio','Detalle etapas',
       'Requiere autorización','Estado autorización','Comentario autorización','Comentarios']];
     const autL={pendiente:'Pendiente',autorizada:'Autorizada',rechazada:'Rechazada'};
-    const nomEt={salida_casa:'Salida de casa',llegada_sitio:'Llegada a sitio',parada_turbina:'Parada',turbina_marcha:'Arranque',salida_sitio:'Salida de sitio'};
-    const mm=m=> m==null?'': (Math.round(m)+' min');
     const push=(e,rec,day,i)=>{
       const hr=horasReales(rec);
       const fz=k=>{ const v=(rec.fuente||{})[k]; return v==='sistema'?'Sistema':(v?'Usuario':'—'); };
@@ -2862,16 +2850,10 @@ async function exportExcel(){
       const teHoras = rec.otMin>0 ? Number((rec.otMin/60).toFixed(2)) : 0;
       const teRes = rec.otMin>0 ? (rec.otEstado==='aprobado'?'Con horas extra aprobadas':rec.otEstado==='rechazado'?'Sin horas extra (rechazado)':'Pendiente de aprobación') : 'Sin tiempo extra';
       const salExtra = (rec.otMin>0 && rec.otEstado==='aprobado') ? rec.salida : '—';
-      const tec = (rec.etapas&&rec.etapas.length);
-      const iv = tec?recIntervalos(rec):{};
-      const hSitio = tec?Number((recHorasSitioMin(rec)/60).toFixed(2)):'';
-      const ord=['salida_casa','llegada_sitio','parada_turbina','turbina_marcha','salida_sitio'];
-      const etDet = tec? rec.etapas.slice().sort((a,b)=>(ord.indexOf(a.k)-ord.indexOf(b.k))||(a.orden-b.orden)).map(x=>fmt(x.min)+' '+(nomEt[x.k]||x.k)+(x.orden?(' '+(x.orden+1)):'')+(x.desc?(': '+x.desc):'')).join(' | ') : '';
       rows.push([e.nombre,e.nomina,e.pais,(e.clas==='operativo'?'Operativo':'Administrativo'),ymd(day),DIAS[i],ST_LBL[rec.status],
         rec.entrada,rec.iniComida,rec.finComida,rec.salida,
         fz('entrada'),fz('iniComida'),fz('finComida'),fz('salida'),
         (hr!=null?Number(hr.toFixed(2)):''),teMin,teHoras,teRes,salExtra,(rec.otComentario||''),
-        hSitio,mm(iv.traslado),mm(iv.preparacion),mm(iv.indisponibilidad||null),mm(iv.cierre),etDet,
         (rec.reqAut?'Sí':'No'),(rec.reqAut?(autL[rec.autEstado||'pendiente']||rec.autEstado):'—'),(rec.autComentario||''),
         rec.comments.map(c=>c.txt+' ('+c.by+')').join(' | ')]);
     };
@@ -2889,12 +2871,11 @@ async function exportExcel(){
       subtitulo='Semana del '+ymd(mon)+' al '+ymd(sun)+tipoTxt+paisTxt+' · '+genMsg;
       fname='registros_semana_'+ymd(mon)+'.xlsx';
     }
-    // anchos y formatos de las 31 columnas
+    // anchos y formatos de las 25 columnas
     colMeta=[{w:26},{w:11},{w:15},{w:14},{w:12},{w:7},{w:13},
       {w:9},{w:12},{w:11},{w:9},
       {w:15},{w:17},{w:17},{w:15},
       {w:14,numFmt:'0.00'},{w:12,numFmt:'0'},{w:13,numFmt:'0.00'},{w:24},{w:20},{w:24},
-      {w:14,numFmt:'0.00'},{w:12},{w:16},{w:14},{w:13},{w:42},
       {w:14},{w:16},{w:24},{w:30}];
   }
   await descargarLibro(sheet, titulo, subtitulo, rows, colMeta, fname);
@@ -2944,69 +2925,40 @@ async function descargarLibro(sheet, titulo, subtitulo, rows, colMeta, fname){
   setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 1500);
 }
 
-/* ===== EXPORTES DE LA JORNADA DEL TÉCNICO (registro independiente) ===== */
-const _NOM_ET={salida_casa:'Salida de casa',llegada_sitio:'Llegada a sitio',parada_turbina:'Parada de turbina',turbina_marcha:'Turbina en marcha',salida_sitio:'Salida de sitio'};
-const _ORD_ET=['salida_casa','llegada_sitio','parada_turbina','turbina_marcha','salida_sitio'];
-// El propio técnico exporta su jornada del día (etapas + descansos + tiempos)
+/* ===== EXPORTES DE LA JORNADA DEL TÉCNICO (desglose, una fila por actividad) ===== */
+// El propio técnico exporta su jornada del día
 async function exportTecnicoMiDia(){
   if(typeof ExcelJS==='undefined'){ alert('No se pudo cargar la librería de Excel (revisa tu conexión).'); return; }
-  const rows=[['Etapa','Hora','Descripción']];
-  etapas.slice().sort((a,b)=>(_ORD_ET.indexOf(a.k)-_ORD_ET.indexOf(b.k))||(a.orden-b.orden))
-    .forEach(e=>rows.push([(_NOM_ET[e.k]||e.k)+(e.orden?(' '+(e.orden+1)):''), fmt(e.min), e.desc||'']));
-  descansos.forEach((d,i)=>rows.push(['Descanso '+(i+1), fmt(d.ini)+' – '+fmt(d.fin), (d.dur||0)+' min']));
-  const iv=intervalos();
-  rows.push(['','','']);
-  rows.push(['Traslado', fmtDur(iv.traslado), '']);
-  rows.push(['Preparación / espera', fmtDur(iv.preparacion), '']);
-  rows.push(['Indisponibilidad', fmtDur(iv.indisponibilidad||null), '']);
-  rows.push(['Cierre en sitio', fmtDur(iv.cierre), '']);
-  rows.push(['Horas en sitio', fmtDur(horasEnSitioMin()), '']);
+  const rows=[['Tipo de tiempo','Etapa de la reparación','Inicio','Fin','Duración (min)','Descripción']];
+  etapas.slice().sort((a,b)=>(a.ini||0)-(b.ini||0)).forEach(e=>rows.push([
+    TIPOS_TEC[e.tipo]||e.tipo,
+    (e.tipo==='efectivo_turbina' && e.etapaRep)?(ETAPAS_REP[e.etapaRep]||e.etapaRep):'',
+    fmt(e.ini), fmt(e.fin), e.min||0, e.desc||'' ]));
+  descansos.forEach((d,i)=>rows.push(['Descanso '+(i+1),'',fmt(d.ini),fmt(d.fin),(d.dur||0),'']));
   await descargarLibro('Técnico', 'SPIE · Jornada del técnico',
     (U?U.nombre:'')+' · '+new Date().toLocaleDateString('es-MX'), rows,
-    [{w:26},{w:18},{w:50}], 'jornada_tecnico_'+hoyISO()+'.xlsx');
+    [{w:26},{w:34},{w:10},{w:10},{w:14,numFmt:'0'},{w:40}], 'jornada_tecnico_'+hoyISO()+'.xlsx');
 }
-// El panel exporta la jornada del técnico de la semana (personal visible)
+// El panel exporta la jornada del técnico de la semana (una fila por actividad)
 async function exportTecnicoPanel(){
   if(typeof ExcelJS==='undefined'){ alert('No se pudo cargar la librería de Excel (revisa tu conexión).'); return; }
-  const mm=m=> m==null?'':(Math.round(m)+' min');
-  const rows=[['Empleado','Nómina','País','Fecha','Día','Detalle etapas','Horas en sitio','Traslado','Preparación/espera','Indisponibilidad','Cierre en sitio']];
+  const rows=[['Empleado','Nómina','País','Fecha','Día','Tipo de tiempo','Etapa de la reparación','Inicio','Fin','Duración (min)','Descripción']];
   const mon=mondayOf(curWeek), sun=new Date(mon); sun.setDate(mon.getDate()+6);
   const data=await ensureWeek(mon);
   regEmployees().forEach(e=>data[e.id].forEach((rec,i)=>{
     if(!(rec.etapas && rec.etapas.length)) return;
     const day=new Date(mon); day.setDate(mon.getDate()+i);
-    const iv=recIntervalos(rec);
-    const etDet=rec.etapas.slice().sort((a,b)=>(_ORD_ET.indexOf(a.k)-_ORD_ET.indexOf(b.k))||(a.orden-b.orden))
-      .map(x=>fmt(x.min)+' '+(_NOM_ET[x.k]||x.k)+(x.orden?(' '+(x.orden+1)):'')+(x.desc?(': '+x.desc):'')).join(' | ');
-    rows.push([e.nombre,e.nomina,e.pais,ymd(day),DIAS[i],etDet,
-      Number((recHorasSitioMin(rec)/60).toFixed(2)), mm(iv.traslado),mm(iv.preparacion),mm(iv.indisponibilidad||null),mm(iv.cierre)]);
+    rec.etapas.slice().sort((a,b)=>(a.ini||0)-(b.ini||0)).forEach(x=>rows.push([
+      e.nombre,e.nomina,e.pais,ymd(day),DIAS[i],
+      TIPOS_TEC[x.tipo]||x.tipo,
+      (x.tipo==='efectivo_turbina' && x.etapaRep)?(ETAPAS_REP[x.etapaRep]||x.etapaRep):'',
+      fmt(x.ini), fmt(x.fin), x.min||0, x.desc||'' ]));
   }));
   await descargarLibro('Jornada del técnico','SPIE · Jornada del técnico',
     'Semana del '+ymd(mon)+' al '+ymd(sun)+' · Generado el '+new Date().toLocaleString('es-MX'), rows,
-    [{w:26},{w:11},{w:15},{w:12},{w:7},{w:48},{w:14,numFmt:'0.00'},{w:12},{w:16},{w:14},{w:13}],
+    [{w:24},{w:11},{w:14},{w:12},{w:7},{w:26},{w:34},{w:10},{w:10},{w:14,numFmt:'0'},{w:40}],
     'jornada_tecnico_semana_'+ymd(mon)+'.xlsx');
 }
-</script>
-<!-- ===== Integración app unificada SPIE (mismo origen spie1111.github.io) ===== -->
-<a id="hse-menu-btn" href="/hse/" style="position:fixed;left:14px;bottom:14px;z-index:99999;display:none;align-items:center;gap:7px;background:#0b1f4d;color:#fff;text-decoration:none;font:600 13px system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif;padding:9px 13px;border-radius:999px;box-shadow:0 4px 14px rgba(11,31,77,.3)">
-  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Menú</a>
-<script>
-/* Si se entró desde el cascarón SPIE (/hse/), pre-llenamos la nómina y mostramos
-   el botón Menú. NO tocamos el login ni el flujo de recuperar contraseña: el usuario
-   escribe su contraseña como siempre. */
-(function(){
-  var hs=null; try{ hs=JSON.parse(localStorage.getItem('hse_session')||'null'); }catch(_){}
-  if(!hs || !hs.nomina) return;
-  function enlazar(){
-    var btn=document.getElementById('hse-menu-btn'); if(btn) btn.style.display='inline-flex';
-    var u=document.getElementById('lgUser');
-    if(u && !u.value){ u.value=String(hs.nomina); try{ u.dispatchEvent(new Event('input',{bubbles:true})); }catch(_){} }
-    var login=document.getElementById('login');
-    var p=document.getElementById('lgPass');
-    if(p && login && !login.classList.contains('hidden')){ try{ p.focus(); }catch(_){} }
-  }
-  if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded', enlazar); } else { enlazar(); }
-})();
 </script>
 </body>
 </html>
