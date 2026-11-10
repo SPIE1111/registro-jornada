@@ -590,26 +590,27 @@
 
   <!-- ============ MODAL (alta / edición de empleado) ============ -->
   <div id="ovEmp" class="overlay hidden">
-    <div class="modal form">
+    <div class="modal form" style="max-width:560px">
       <div class="mh" style="color:var(--blue)" id="empFormTitle">Alta de empleado</div>
-      <div class="row2">
+      <div class="row2" style="margin-bottom:14px">
         <div><label>Nombre completo</label><input id="efNombre"></div>
         <div><label>Número de nómina</label><input id="efNomina"></div>
       </div>
-      <div class="row2">
+      <div class="row2" style="margin-bottom:14px">
         <div><label>País</label><select id="efPais">
           <option value="México">México</option><option value="Chile">Chile</option>
           <option value="Uruguay">Uruguay</option><option value="República Dominicana">República Dominicana</option></select></div>
         <div><label>Clasificación</label><select id="efClas"><option value="operativo">Operativo (campo)</option><option value="administrativo">Administrativo (oficina)</option></select></div>
       </div>
-      <div class="row2">
+      <div class="row2" style="margin-bottom:10px">
         <div><label>¿Es supervisor?</label><select id="efSup" onchange="efToggleSup()"><option value="false">No</option><option value="true">Sí</option></select></div>
         <div id="efRhRow"><label>Rol RH / Admin (ve a todo el personal)</label><select id="efRh"><option value="false">No</option><option value="true">Sí</option></select></div>
       </div>
-      <div class="muted-note" style="margin-top:0;margin-bottom:12px">Si lo marcas como supervisor, se le habilita el acceso al panel.</div>
-      <div id="efSupWrap" style="margin-bottom:12px"><label>Supervisor asignado</label><select id="efSupAsignado"></select></div>
-      <div id="efSubWrap" style="display:none;margin-bottom:12px"><label>Personas a su cargo</label>
-        <div id="efSubList" style="max-height:180px;overflow:auto;border:1.5px solid var(--line);border-radius:10px;padding:8px;background:var(--paper)"></div></div>
+      <div class="muted-note" style="margin-top:0;margin-bottom:14px">Si lo marcas como supervisor, se le habilita el acceso al panel.</div>
+      <div id="efSupWrap" style="margin-bottom:14px"><label>Supervisor asignado</label><select id="efSupAsignado"></select></div>
+      <div id="efSubWrap" style="display:none;margin-bottom:14px"><label>Personas a su cargo</label>
+        <input id="efSubBuscar" type="text" placeholder="Buscar por nombre o nómina…" oninput="filtrarEfSub()" style="width:100%;margin-bottom:8px;padding:9px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;color:var(--blue);background:var(--paper)">
+        <div id="efSubList" style="max-height:220px;overflow:auto;border:1.5px solid var(--line);border-radius:10px;padding:8px;background:var(--paper)"></div></div>
       <div style="display:flex;gap:10px;margin-top:16px">
         <button class="btn ghost" style="flex:1" onclick="closeModal('ovEmp')">Cancelar</button>
         <button class="btn primary" style="flex:1" onclick="saveEmp()">Guardar</button>
@@ -732,7 +733,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Si el usuario llegó desde el enlace del correo (?reset=token), muestra el formulario de nueva contraseña
   try{ mostrarResetDesdeURL(); }catch(e){ console.warn(e); }
 });
-const APP_VERSION='v6 · 10-nov-2026 (Técnico: tipos de tiempo + etapa de reparación)';
+const APP_VERSION='v7 · 10-nov-2026 (Filtro por tipo de registro · buscador de supervisor · rol RH solo admin · Excel seccionado)';
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
 function hoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -2323,6 +2324,8 @@ async function renderReg(){
   // ---- vista semanal ----
   const mon=mondayOf(curWeek); const data=await ensureWeek(mon);
   const cov=await coberturaSemana(mon);
+  const tipo=document.getElementById('fTipo').value;   // filtro por tipo de registro
+  const LBL_TIPO={entrada:'Entrada',iniComida:'Inicio comida',finComida:'Fin comida',salida:'Salida'};
   const end=new Date(mon); end.setDate(mon.getDate()+6);
   document.getElementById('wkLbl').textContent =
     'Semana del '+mon.getDate()+' '+mon.toLocaleDateString('es-MX',{month:'short'})+' al '+end.getDate()+' '+end.toLocaleDateString('es-MX',{month:'short',year:'numeric'});
@@ -2344,6 +2347,15 @@ async function renderReg(){
       const marca = cov[e.id] && cov[e.id][dstr];
       if(marca){
         body+='<td><span class="cell" style="cursor:default" title="'+marca.label+' — no se cuenta como trabajado"><span class="st-dot st-'+(marca.tipo==='vacaciones'?'vacaciones':'ausencia')+'"></span><span class="txt">'+marca.label+'</span></span></td>';
+        return;
+      }
+      // filtro por tipo de registro: muestra la hora de esa marca (con ⚙ si la puso el sistema)
+      if(tipo!=='todos'){
+        const t=rec[tipo]; const f=(rec.fuente||{})[tipo];
+        const sis = (t && f==='sistema')? ' <span class="cmt" title="Registrado por el sistema">⚙</span>':'';
+        body+='<td>'+(rec.status!=='pendiente'
+          ? '<span class="cell" onclick="openDet(\''+e.id+'\',\''+ymd(mon)+'\','+i+')" title="'+(LBL_TIPO[tipo]||tipo)+'">'+(t?('<b>'+t+'</b>'+sis):'<span style="opacity:.5">—</span>')+'</span>'
+          : '<span class="cell" style="cursor:default;opacity:.5"><span class="txt">—</span></span>')+'</td>';
         return;
       }
       const clickable = rec.status!=='pendiente';
@@ -2529,8 +2541,10 @@ function openEmpForm(id){
   // select de supervisor asignado (jefe de este empleado)
   const sopts='<option value="">(Sin asignar)</option>'+EMP.filter(x=>(x.supervisor||x.es_rh)&&x.id!==id).map(x=>`<option value="${x.id}">${x.nombre} · ${x.nomina}</option>`).join('');
   const selSup=document.getElementById('efSupAsignado'); selSup.innerHTML=sopts; selSup.value=e&&e.supervisorId?e.supervisorId:'';
-  // el rol RH solo lo edita RH
-  document.getElementById('efRhRow').style.display = (U&&U.es_rh)?'block':'none';
+  // el rol RH / Admin solo lo puede marcar un administrador
+  const esAdmin = !!(U && rolDe(U.numero_nomina||U.nomina)==='admin');
+  document.getElementById('efRhRow').style.display = esAdmin?'block':'none';
+  const sb2=document.getElementById('efSubBuscar'); if(sb2) sb2.value='';
   document.getElementById('efSubList').dataset.built='';   // se arma al marcar supervisor (no antes, para no cargar 200 casillas)
   efToggleSup();
   document.getElementById('ovEmp').classList.remove('hidden');
@@ -2543,6 +2557,10 @@ function buildEfSubList(){
     return `<label style="display:flex;align-items:center;gap:8px;font-weight:500;padding:4px 2px;margin:0"><input type="checkbox" class="efSub" value="${x.id}" ${ch} style="width:16px;height:16px"> ${x.nombre} · ${x.nomina}</label>`;
   }).join('') || '<div class="empty" style="font-size:12.5px">Sin empleados disponibles.</div>';
   sub.dataset.built='1';
+}
+function filtrarEfSub(){
+  const q=norm((document.getElementById('efSubBuscar')||{}).value||'');
+  document.querySelectorAll('#efSubList label').forEach(l=>{ l.style.display = (!q || norm(l.textContent).includes(q))?'flex':'none'; });
 }
 function efToggleSup(){
   const esSup=document.getElementById('efSup').value==='true';
@@ -2822,7 +2840,7 @@ async function eliminarIncidencia(id){ await DB.deleteIncidencia(id); renderInc(
 /* ================= EXPORTAR A EXCEL (según filtros) ================= */
 async function exportExcel(){
   if(typeof ExcelJS==='undefined'){ alert('No se pudo cargar la librería de Excel (revisa tu conexión a internet).'); return; }
-  let rows, sheet, fname, titulo, subtitulo, colMeta;
+  let rows, sheet, fname, titulo, subtitulo, colMeta, grupos=null;
   const genMsg='Generado el '+new Date().toLocaleString('es-MX');
   if(admView==='emp'){
     sheet='Empleados'; titulo='SPIE · Empleados';
@@ -2877,12 +2895,16 @@ async function exportExcel(){
       {w:15},{w:17},{w:17},{w:15},
       {w:14,numFmt:'0.00'},{w:12,numFmt:'0'},{w:13,numFmt:'0.00'},{w:24},{w:20},{w:24},
       {w:14},{w:16},{w:24},{w:30}];
+    grupos=[{label:'Identificación',span:4},{label:'Día',span:3},
+      {label:'Marcas del día',span:4},{label:'¿Quién registró?',span:4},
+      {label:'Horas y tiempo extra',span:6},{label:'Autorización',span:3},
+      {label:'Comentarios',span:1}];
   }
-  await descargarLibro(sheet, titulo, subtitulo, rows, colMeta, fname);
+  await descargarLibro(sheet, titulo, subtitulo, rows, colMeta, fname, grupos);
 }
 function _borde(){ const s={style:'thin',color:{argb:'FFD9DEE8'}}; return {top:s,left:s,right:s,bottom:s}; }
-async function descargarLibro(sheet, titulo, subtitulo, rows, colMeta, fname){
-  const AZUL='FF0E2A5A', AZULCLARO='FFF3F5FA';
+async function descargarLibro(sheet, titulo, subtitulo, rows, colMeta, fname, groups){
+  const AZUL='FF0E2A5A', AZULCLARO='FFF3F5FA', AZULMED='FF2A4A7A';
   const nCols=rows[0].length;
   const wb=new ExcelJS.Workbook(); wb.creator='SPIE'; wb.created=new Date();
   const ws=wb.addWorksheet(sheet, { views:[{state:'frozen', xSplit:2, ySplit:4}] });
@@ -2898,6 +2920,21 @@ async function descargarLibro(sheet, titulo, subtitulo, rows, colMeta, fname){
   const s=ws.getCell(2,1); s.value=subtitulo||'';
   s.font={italic:true,size:10,color:{argb:'FF64708A'}};
   s.alignment={horizontal:'left',indent:1};
+  // Encabezados de SECCIÓN (fila 3) — agrupan las columnas por acción
+  if(groups && groups.length){
+    let col=1;
+    groups.forEach(g=>{
+      const span=Math.max(1,g.span|0);
+      if(span>1) ws.mergeCells(3,col,3,col+span-1);
+      const gc=ws.getCell(3,col); gc.value=g.label;
+      gc.font={bold:true,size:9,color:{argb:'FFFFFFFF'}};
+      gc.fill={type:'pattern',pattern:'solid',fgColor:{argb:AZULMED}};
+      gc.alignment={vertical:'middle',horizontal:'center',wrapText:true};
+      gc.border=_borde();
+      col+=span;
+    });
+    ws.getRow(3).height=18;
+  }
   // Encabezados (fila 4)
   const hdr=ws.getRow(4);
   rows[0].forEach((h,i)=>{ const c=hdr.getCell(i+1); c.value=h;
