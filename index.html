@@ -2987,5 +2987,26 @@ async function exportTecnicoPanel(){
     'jornada_tecnico_semana_'+ymd(mon)+'.xlsx');
 }
 </script>
+<!-- ===== Integración app unificada SPIE (mismo origen spie1111.github.io) ===== -->
+<a id="hse-menu-btn" href="/hse/" style="position:fixed;left:14px;bottom:14px;z-index:99999;display:none;align-items:center;gap:7px;background:#0b1f4d;color:#fff;text-decoration:none;font:600 13px system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif;padding:9px 13px;border-radius:999px;box-shadow:0 4px 14px rgba(11,31,77,.3)">
+  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Menú</a>
+<script>
+/* Si se entró desde el cascarón SPIE (/hse/), pre-llenamos la nómina y mostramos
+   el botón Menú. NO tocamos el login ni el flujo de recuperar contraseña: el usuario
+   escribe su contraseña como siempre. */
+(function(){
+  var hs=null; try{ hs=JSON.parse(localStorage.getItem('hse_session')||'null'); }catch(_){}
+  if(!hs || !hs.nomina) return;
+  function enlazar(){
+    var btn=document.getElementById('hse-menu-btn'); if(btn) btn.style.display='inline-flex';
+    var u=document.getElementById('lgUser');
+    if(u && !u.value){ u.value=String(hs.nomina); try{ u.dispatchEvent(new Event('input',{bubbles:true})); }catch(_){} }
+    var login=document.getElementById('login');
+    var p=document.getElementById('lgPass');
+    if(p && login && !login.classList.contains('hidden')){ try{ p.focus(); }catch(_){} }
+  }
+  if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded', enlazar); } else { enlazar(); }
+})();
+</script>
 </body>
 </html>
