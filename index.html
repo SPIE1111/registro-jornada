@@ -389,7 +389,8 @@
         <div id="etapasList"></div>
         <div id="intervalosBox" style="margin-top:12px"></div>
         <div class="actions" style="margin-top:16px">
-          <button class="btn green" onclick="exportTecnicoMiDia()">⬇ Exportar mi jornada del técnico</button>
+          <button class="btn green" id="btnExpTec" onclick="exportTecnicoMiDia()">⬇ Exportar mi jornada del técnico</button>
+          <div id="expTecNota" class="muted-note" style="margin-top:6px"></div>
         </div>
       </div>
       <div>
@@ -781,7 +782,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Si el usuario llegó desde el enlace del correo (?reset=token), muestra el formulario de nueva contraseña
   try{ mostrarResetDesdeURL(); }catch(e){ console.warn(e); }
 });
-const APP_VERSION='v9 · 17-nov-2026 (Preparación: Proyecto/Turbina/Pala/Concha/Radio · grupos de técnicos · doble aprobación · Excel unificado)';
+const APP_VERSION='v10 · 17-nov-2026 (Excel del técnico deshabilitado hasta aprobación · sin registro de jornada en vacaciones/ausencia)';
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
 function hoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -1215,6 +1216,12 @@ const DB = {
       .eq('empleado_id',empId).lte('fecha_inicio',hoyISO()).gte('fecha_fin',hoyISO()).maybeSingle();
     return data||null;
   },
+  async vacacionHoy(empId){
+    if(!SB_LIVE){ return vacacionesDemo.some(v=>v.empId===empId && (v.ini||v.fecha_inicio)<=hoyISO() && (v.fin||v.fecha_fin)>=hoyISO()); }
+    const { data } = await sb.from('vacaciones').select('id')
+      .eq('empleado_id',empId).lte('fecha_inicio',hoyISO()).gte('fecha_fin',hoyISO()).limit(1);
+    return !!(data && data.length);
+  },
   /* ---------- FESTIVOS ---------- */
   async cargarFestivos(){
     if(!SB_LIVE) return festivosDemo;
@@ -1583,6 +1590,7 @@ async function entrarApp(rec){
   try { esFestivo = await DB.festivoHoy(U.pais); } catch(e){ esFestivo=null; }
   try { esAusencia = await DB.ausenciaHoy(U.id); } catch(e){ esAusencia=null; }
   try { esIncidencia = await DB.incidenciaHoy(U.id); } catch(e){ esIncidencia=null; }
+  try { esVacaciones = await DB.vacacionHoy(U.id); } catch(e){ /* conserva el valor */ }
   requiereAut = !!(esFinde || esFestivo);
   await DB.abrirJornada(requiereAut);     // crea/recupera la jornada de hoy (LIVE)
   // recupera los registros ya hechos hoy (para no duplicar el auto-registro)
@@ -2203,9 +2211,34 @@ function bannerAprobacion(){
   h+='</div>';
   return h;
 }
+// en vacaciones o con una incidencia/ausencia no se habilita el registro de la jornada del técnico
+function tecnicoBloqueadoPorAusencia(){ return !!(esVacaciones || esAusencia || esIncidencia); }
+function motivoAusenciaTxt(){
+  if(esVacaciones) return 'vacaciones';
+  if(esIncidencia) return 'una incidencia';
+  if(esAusencia)   return 'una ausencia / incapacidad';
+  return '';
+}
+function actualizarBtnExpTec(){
+  const btn=document.getElementById('btnExpTec'); const nota=document.getElementById('expTecNota');
+  if(!btn) return;
+  const aprobado = !!(aprobHoy && aprobHoy.estado==='aprobado');
+  // habilitado solo si: no hay ausencia, y (no está en grupo  ó  el día ya fue aprobado por el supervisor)
+  const hab = !tecnicoBloqueadoPorAusencia() && (!miGrupo || aprobado);
+  btn.disabled = !hab;
+  btn.style.opacity = hab? '' : '.5';
+  btn.style.cursor  = hab? '' : 'not-allowed';
+  if(nota) nota.textContent = (miGrupo && !aprobado && !tecnicoBloqueadoPorAusencia())
+    ? 'El Excel se habilita cuando el supervisor aprueba el registro del día.' : '';
+}
 function renderEtapas(){
   const el=document.getElementById('etapasList'); if(!el) return;
-  if(miRolGrupo==='miembro'){ renderMiembroAprob(); return; }
+  if(tecnicoBloqueadoPorAusencia()){
+    el.innerHTML='<div class="empty">Hoy tienes '+motivoAusenciaTxt()+' registrada. No se habilita el registro de la jornada del técnico.</div>';
+    const ib=document.getElementById('intervalosBox'); if(ib) ib.innerHTML='';
+    actualizarBtnExpTec(); return;
+  }
+  if(miRolGrupo==='miembro'){ renderMiembroAprob(); actualizarBtnExpTec(); return; }
   const bloqueado=etapasBloqueadas();
   let html='';
   if(miGrupo) html+=bannerAprobacion();
@@ -2216,6 +2249,7 @@ function renderEtapas(){
   document.getElementById('intervalosBox').innerHTML=
     '<div style="font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--gray);font-weight:700;margin-bottom:6px">Tiempos por tipo</div>'+
     Object.keys(TIPOS_TEC).map(k=>'<div class="lg"><span>'+TIPOS_TEC[k]+'</span><b>'+fmtDur(tot[k]||null)+'</b></div>').join('');
+  actualizarBtnExpTec();
 }
 function renderMiembroAprob(){
   const el=document.getElementById('etapasList'); if(!el) return;
@@ -2261,7 +2295,7 @@ async function miembroAprobarUI(aprob){
   const r=await DB.aprobarMiembro(aprobHoy, U.id, aprob, cmt.trim());
   if(r && r.error){ alert('No se pudo registrar tu respuesta: '+(r.error.message||r.error)); return; }
   aprobHoy=await DB.cargarAprobacion(miGrupo.id, hoyISO());
-  renderMiembroAprob();
+  renderMiembroAprob(); actualizarBtnExpTec();
   addNotif(aprob?'green':'warn',aprob?'✅':'⚠️', aprob?'Aprobaste el registro del día.':'Rechazaste el registro; el registrador deberá corregirlo.');
 }
 function closeModal(id){ document.getElementById(id).classList.add('hidden'); }
