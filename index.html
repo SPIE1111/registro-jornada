@@ -415,6 +415,7 @@
           <button id="subFest" onclick="admSub('fest')">Festivos</button>
           <button id="subAus" onclick="admSub('aus')">Incidencias</button>
           <button id="subVac" onclick="admSub('vac')">Vacaciones</button>
+          <button id="subGrp" onclick="admSub('grp')">Grupos<span id="badgeGrp" class="pend-badge"></span></button>
         </div>
         <div class="admin-actions">
           <button class="btn green" onclick="exportExcel()">⬇ Exportar a Excel</button>
@@ -570,6 +571,43 @@
         <p class="muted-note" style="margin:0 0 10px">En las fechas registradas, el empleado verá el día como vacaciones (registro completo automático, sin recordatorios).</p>
         <div class="tbl-wrap"><table class="reg" id="vacTbl"></table></div>
       </div>
+
+      <!-- ---- SUB-VISTA: GRUPOS DE TÉCNICOS ---- -->
+      <div id="paneGrp" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+          <p class="muted-note" style="margin:0">Arma grupos de técnicos por número de nómina. El <b>registrador</b> captura los tiempos por todo el grupo; los demás técnicos y tú (supervisor) deben aprobarlos.</p>
+          <button class="btn primary" style="width:auto;padding:9px 14px" onclick="openGrupo(null)">＋ Crear grupo</button>
+        </div>
+        <div id="aprobPendBox"></div>
+        <div id="gruposList"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ MODAL (crear/editar grupo) ============ -->
+  <div id="ovGrupo" class="overlay hidden">
+    <div class="modal" style="max-width:560px">
+      <div class="mh" style="color:var(--blue)" id="grpTitulo">Crear grupo</div>
+      <label>Nombre del grupo</label>
+      <input type="text" id="grpNombre" placeholder="Ej. Cuadrilla Turbina 12" style="width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;color:var(--blue);background:var(--paper);margin-bottom:12px">
+      <label>Registrador (captura por todo el grupo)</label>
+      <select id="grpRegistrador" style="width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;color:var(--blue);background:var(--paper);margin-bottom:12px"></select>
+      <label>Miembros del grupo (por número de nómina)</label>
+      <input id="grpBuscar" type="text" placeholder="Buscar por nombre o nómina…" oninput="filtrarGrpMiembros()" style="width:100%;margin-bottom:8px;padding:9px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;color:var(--blue);background:var(--paper)">
+      <div id="grpMiembros" style="max-height:220px;overflow:auto;border:1.5px solid var(--line);border-radius:10px;padding:8px;background:var(--paper)"></div>
+      <div style="display:flex;gap:10px;margin-top:14px">
+        <button class="btn ghost" style="flex:1" onclick="closeModal('ovGrupo')">Cancelar</button>
+        <button class="btn primary" style="flex:1" onclick="saveGrupo()">Guardar grupo</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ MODAL (ver registro del grupo) ============ -->
+  <div id="ovInfo" class="overlay hidden">
+    <div class="modal wide">
+      <div class="mh" style="color:var(--blue)" id="infoTitle">Registro del día</div>
+      <div id="infoBody"></div>
+      <button class="btn ghost" style="width:100%;margin-top:12px" onclick="closeModal('ovInfo')">Cerrar</button>
     </div>
   </div>
 
@@ -692,6 +730,16 @@
       <label>Etapa de la reparación</label>
       <select id="etRep" style="width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;color:var(--blue);background:var(--paper)"></select>
     </div>
+    <div id="etPrepWrap" style="display:none;margin-top:10px">
+      <div style="font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--gray);font-weight:700;margin-bottom:6px">Datos de la tarea</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div><label>Proyecto</label><input type="text" id="etProyecto" placeholder="Proyecto" style="width:100%"></div>
+        <div><label>Turbina</label><input type="text" id="etTurbina" placeholder="Turbina" style="width:100%"></div>
+        <div><label>Pala</label><input type="text" id="etPala" placeholder="Pala" style="width:100%"></div>
+        <div><label>Concha</label><input type="text" id="etConcha" placeholder="Concha" style="width:100%"></div>
+        <div style="grid-column:1 / -1"><label>Radio</label><input type="text" id="etRadio" placeholder="Radio" style="width:100%"></div>
+      </div>
+    </div>
     <div style="display:flex;gap:10px;margin-top:10px">
       <div style="flex:1"><label>Hora inicio</label><input type="time" id="etIni" style="width:100%"></div>
       <div style="flex:1"><label>Hora fin</label><input type="time" id="etFin" style="width:100%"></div>
@@ -733,7 +781,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Si el usuario llegó desde el enlace del correo (?reset=token), muestra el formulario de nueva contraseña
   try{ mostrarResetDesdeURL(); }catch(e){ console.warn(e); }
 });
-const APP_VERSION='v8 · 10-nov-2026 (Salida fija 17:30 sin registro anticipado · solo tiempo extra)';
+const APP_VERSION='v9 · 17-nov-2026 (Preparación: Proyecto/Turbina/Pala/Concha/Radio · grupos de técnicos · doble aprobación · Excel unificado)';
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
 function hoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -904,7 +952,8 @@ const DB = {
     if(!SB_LIVE || !jornadaId) return;
     const row={ jornada_id:jornadaId, empleado_id:U.id, fecha:hoyISO(), etapa:e.tipo,
       etapa_reparacion:e.etapaRep||null, orden:e.orden||0,
-      hora:fmt(e.ini), hora_fin:fmt(e.fin), minutos:e.min, descripcion:e.desc||null };
+      hora:fmt(e.ini), hora_fin:fmt(e.fin), minutos:e.min, descripcion:e.desc||null,
+      proyecto:e.proyecto||null, turbina:e.turbina||null, pala:e.pala||null, concha:e.concha||null, radio:e.radio||null };
     if(e.id){
       const { error } = await sb.from('etapas_tecnico').update(row).eq('id', e.id);
       if(error){ console.warn('guardarEtapa', error); avisoGuardado('la actividad del técnico', error); }
@@ -922,11 +971,12 @@ const DB = {
   async cargarEtapasHoy(){
     if(!SB_LIVE || !jornadaId) return [];
     const { data, error } = await sb.from('etapas_tecnico')
-      .select('id,etapa,etapa_reparacion,orden,hora,hora_fin,minutos,descripcion').eq('jornada_id',jornadaId).order('orden');
+      .select('id,etapa,etapa_reparacion,orden,hora,hora_fin,minutos,descripcion,proyecto,turbina,pala,concha,radio').eq('jornada_id',jornadaId).order('orden');
     if(error){ console.warn('cargarEtapasHoy', error); return []; }
     const toMin=h=>h?(parseInt(h.split(':')[0])*60+parseInt(h.split(':')[1])):0;
     return (data||[]).map(r=>({ id:r.id, tipo:r.etapa, etapaRep:r.etapa_reparacion||'', orden:r.orden||0,
-      ini:toMin(r.hora), fin:toMin(r.hora_fin), min:(r.minutos!=null?r.minutos:Math.max(0,toMin(r.hora_fin)-toMin(r.hora))), desc:r.descripcion||'' }));
+      ini:toMin(r.hora), fin:toMin(r.hora_fin), min:(r.minutos!=null?r.minutos:Math.max(0,toMin(r.hora_fin)-toMin(r.hora))), desc:r.descripcion||'',
+      proyecto:r.proyecto||'', turbina:r.turbina||'', pala:r.pala||'', concha:r.concha||'', radio:r.radio||'' }));
   },
   async cerrarJornada(rec){
     if(!SB_LIVE || !jornadaId) return;
@@ -941,6 +991,112 @@ const DB = {
       error=r2.error;
     }
     if(error) console.warn('cerrarJornada', error);
+  },
+
+  /* ---------- GRUPOS DE TÉCNICOS Y APROBACIÓN ---------- */
+  async cargarGrupos(){
+    if(!SB_LIVE) return [];
+    const { data, error } = await sb.from('grupos_tecnico')
+      .select('id,nombre,supervisor_id,registrador_id,activo,grupo_miembros(empleado_id)').eq('activo',true);
+    if(error){ console.warn('cargarGrupos', error); return []; }
+    return (data||[]).map(g=>({ id:g.id, nombre:g.nombre, supervisorId:g.supervisor_id,
+      registradorId:g.registrador_id, miembros:(g.grupo_miembros||[]).map(m=>m.empleado_id) }));
+  },
+  async guardarGrupo(g){
+    if(!SB_LIVE) return {error:'sin conexión'};
+    const row={ nombre:g.nombre, supervisor_id:g.supervisorId||null, registrador_id:g.registradorId||null, activo:true };
+    let gid=g.id;
+    if(gid){ const {error}=await sb.from('grupos_tecnico').update(row).eq('id',gid); if(error) return {error}; }
+    else { const {data,error}=await sb.from('grupos_tecnico').insert(row).select('id').maybeSingle(); if(error) return {error}; gid=data&&data.id; }
+    await sb.from('grupo_miembros').delete().eq('grupo_id',gid);
+    const miembros=[...new Set([...(g.miembros||[]), g.registradorId].filter(Boolean))];
+    if(miembros.length) await sb.from('grupo_miembros').insert(miembros.map(id=>({grupo_id:gid, empleado_id:id})));
+    return { id:gid };
+  },
+  async eliminarGrupo(id){
+    if(!SB_LIVE) return;
+    const { error } = await sb.from('grupos_tecnico').update({activo:false}).eq('id',id);
+    if(error) console.warn('eliminarGrupo', error);
+  },
+  // etapas capturadas por un empleado (el registrador) en una fecha — para la vista de miembros/supervisor
+  async cargarEtapasDe(empId, fechaISO){
+    if(!SB_LIVE) return [];
+    const { data, error } = await sb.from('etapas_tecnico')
+      .select('id,etapa,etapa_reparacion,orden,hora,hora_fin,minutos,descripcion,proyecto,turbina,pala,concha,radio')
+      .eq('empleado_id',empId).eq('fecha',fechaISO).order('orden');
+    if(error){ console.warn('cargarEtapasDe', error); return []; }
+    const toMin=h=>h?(parseInt(h.split(':')[0])*60+parseInt(h.split(':')[1])):0;
+    return (data||[]).map(r=>({ id:r.id, tipo:r.etapa, etapaRep:r.etapa_reparacion||'', orden:r.orden||0,
+      ini:toMin(r.hora), fin:toMin(r.hora_fin), min:(r.minutos!=null?r.minutos:Math.max(0,toMin(r.hora_fin)-toMin(r.hora))), desc:r.descripcion||'',
+      proyecto:r.proyecto||'', turbina:r.turbina||'', pala:r.pala||'', concha:r.concha||'', radio:r.radio||'' }));
+  },
+  // estado de aprobación de un grupo en una fecha (con las aprobaciones individuales)
+  async cargarAprobacion(grupoId, fechaISO){
+    if(!SB_LIVE || !grupoId) return null;
+    const { data, error } = await sb.from('aprobaciones_tecnico')
+      .select('id,grupo_id,fecha,estado,comentario_rechazo,enviado_en,aprobado_sup_en,aprobaciones_tecnico_miembro(empleado_id,aprobado,comentario)')
+      .eq('grupo_id',grupoId).eq('fecha',fechaISO).maybeSingle();
+    if(error){ console.warn('cargarAprobacion', error); return null; }
+    if(!data) return null;
+    return { id:data.id, grupoId:data.grupo_id, fecha:data.fecha, estado:data.estado,
+      comentarioRechazo:data.comentario_rechazo||'', enviadoEn:data.enviado_en, aprobadoSupEn:data.aprobado_sup_en,
+      miembros:(data.aprobaciones_tecnico_miembro||[]).map(m=>({empId:m.empleado_id, aprobado:m.aprobado, comentario:m.comentario||''})) };
+  },
+  // el registrador envía el día a aprobación: crea/repone la cabecera y las casillas de cada técnico
+  async enviarAprobacion(grupo, fechaISO){
+    if(!SB_LIVE) return {error:'sin conexión'};
+    const up={ grupo_id:grupo.id, fecha:fechaISO, estado:'pendiente_tecnicos', comentario_rechazo:null, rechazado_por:null, enviado_en:new Date().toISOString(), aprobado_sup_en:null, actualizado_en:new Date().toISOString() };
+    const { data, error } = await sb.from('aprobaciones_tecnico').upsert(up,{onConflict:'grupo_id,fecha'}).select('id').maybeSingle();
+    if(error) return {error};
+    const aid=data&&data.id;
+    await sb.from('aprobaciones_tecnico_miembro').delete().eq('aprobacion_id',aid);
+    const otros=(grupo.miembros||[]).filter(id=>id!==grupo.registradorId);
+    if(otros.length) await sb.from('aprobaciones_tecnico_miembro').insert(otros.map(id=>({aprobacion_id:aid, empleado_id:id, aprobado:null})));
+    return { id:aid };
+  },
+  // un técnico (miembro) aprueba o rechaza; recalcula el estado de la cabecera
+  async aprobarMiembro(aprob, empId, aprobado, comentario){
+    if(!SB_LIVE) return {error:'sin conexión'};
+    await sb.from('aprobaciones_tecnico_miembro').upsert(
+      {aprobacion_id:aprob.id, empleado_id:empId, aprobado, comentario:comentario||null, fecha_hora:new Date().toISOString()},
+      {onConflict:'aprobacion_id,empleado_id'});
+    const otros=aprob.miembros.map(m=>m.empId===empId?{...m,aprobado,comentario}:m);
+    let estado, patch={actualizado_en:new Date().toISOString()};
+    if(aprobado===false){ estado='rechazado'; patch.comentario_rechazo=comentario||'Sin comentario'; patch.rechazado_por=empId; }
+    else if(otros.every(m=>m.aprobado===true)) estado='pendiente_supervisor';
+    else estado='pendiente_tecnicos';
+    patch.estado=estado;
+    const { error } = await sb.from('aprobaciones_tecnico').update(patch).eq('id',aprob.id);
+    if(error) return {error};
+    return { estado };
+  },
+  // el supervisor aprueba o rechaza el día del grupo
+  async aprobarSupervisor(aprobId, aprobado, comentario){
+    if(!SB_LIVE) return {error:'sin conexión'};
+    const patch = aprobado
+      ? { estado:'aprobado', aprobado_sup_en:new Date().toISOString(), comentario_rechazo:null, actualizado_en:new Date().toISOString() }
+      : { estado:'rechazado', comentario_rechazo:comentario||'Sin comentario', actualizado_en:new Date().toISOString() };
+    const { error } = await sb.from('aprobaciones_tecnico').update(patch).eq('id',aprobId);
+    if(error) return {error};
+    return {ok:true};
+  },
+  // para el supervisor: todas las aprobaciones de sus grupos en una fecha
+  async cargarAprobacionesSup(grupoIds, fechaISO){
+    if(!SB_LIVE || !grupoIds.length) return [];
+    const { data, error } = await sb.from('aprobaciones_tecnico')
+      .select('id,grupo_id,fecha,estado,comentario_rechazo,enviado_en,aprobado_sup_en,aprobaciones_tecnico_miembro(empleado_id,aprobado,comentario)')
+      .in('grupo_id',grupoIds).eq('fecha',fechaISO);
+    if(error){ console.warn('cargarAprobacionesSup', error); return []; }
+    return (data||[]).map(d=>({ id:d.id, grupoId:d.grupo_id, fecha:d.fecha, estado:d.estado,
+      comentarioRechazo:d.comentario_rechazo||'', enviadoEn:d.enviado_en, aprobadoSupEn:d.aprobado_sup_en,
+      miembros:(d.aprobaciones_tecnico_miembro||[]).map(m=>({empId:m.empleado_id, aprobado:m.aprobado, comentario:m.comentario||''})) }));
+  },
+
+  async nombresDe(ids){
+    if(!SB_LIVE || !ids.length) return [];
+    const { data, error } = await sb.from('empleados').select('id,nombre_completo,numero_nomina').in('id',ids);
+    if(error){ console.warn('nombresDe', error); return []; }
+    return (data||[]).map(d=>({ id:d.id, nombre:d.nombre_completo, nomina:d.numero_nomina }));
   },
 
   /* ---------- PANEL ---------- */
@@ -989,14 +1145,15 @@ const DB = {
     });
     // etapas de la jornada del técnico (personal de campo)
     try{
-      let qt=sb.from('etapas_tecnico').select('empleado_id,fecha,etapa,etapa_reparacion,orden,hora,hora_fin,minutos,descripcion').gte('fecha', monISO).lte('fecha', sunISO); if(filtra) qt=qt.in('empleado_id',ids);
+      let qt=sb.from('etapas_tecnico').select('empleado_id,fecha,etapa,etapa_reparacion,orden,hora,hora_fin,minutos,descripcion,proyecto,turbina,pala,concha,radio').gte('fecha', monISO).lte('fecha', sunISO); if(filtra) qt=qt.in('empleado_id',ids);
       const { data:ets } = await qt;
       const toMin=h=>h?(parseInt(h.split(':')[0])*60+parseInt(h.split(':')[1])):0;
       (ets||[]).forEach(et=>{ if(!data[et.empleado_id]) return;
         const d=new Date(et.fecha+'T00:00:00'); const idx=Math.round((d-mon)/86400000);
         if(idx<0||idx>6) return; const rec=data[et.empleado_id][idx];
         (rec.etapas=rec.etapas||[]).push({ tipo:et.etapa, etapaRep:et.etapa_reparacion||'', orden:et.orden||0,
-          ini:toMin(et.hora), fin:toMin(et.hora_fin), min:(et.minutos!=null?et.minutos:Math.max(0,toMin(et.hora_fin)-toMin(et.hora))), desc:et.descripcion||'' }); });
+          ini:toMin(et.hora), fin:toMin(et.hora_fin), min:(et.minutos!=null?et.minutos:Math.max(0,toMin(et.hora_fin)-toMin(et.hora))), desc:et.descripcion||'',
+          proyecto:et.proyecto||'', turbina:et.turbina||'', pala:et.pala||'', concha:et.concha||'', radio:et.radio||'' }); });
     }catch(e){ /* tabla etapas_tecnico aún no creada */ }
     return data;
   },
@@ -1255,6 +1412,12 @@ let checks={};                   // datos por check
 let descansos=[];
 let etapas=[];   // etapas de la jornada del técnico (personal de campo)
 let etCtx=null;  // etapa que se está registrando (k + orden)
+/* ---- grupos de técnicos y aprobación ---- */
+let GRUPOS=[];        // todos los grupos (para el supervisor)
+let miGrupo=null;     // el grupo al que pertenece el técnico logueado
+let miRolGrupo=null;  // 'registrador' | 'miembro' | null (sin grupo)
+let aprobHoy=null;    // estado de aprobación del grupo para HOY
+let etapasGrupo=[];   // etapas del día capturadas por el registrador (vista de miembros)
 /* Tipos de tiempo de la jornada del técnico */
 const TIPOS_TEC={
   efectivo_turbina:'Tiempo efectivo en turbina',
@@ -1275,6 +1438,14 @@ const ETAPAS_REP={
   topcoat_1:'Aplicación de top coat, 1ra mano', topcoat_2:'Aplicación de top coat, 2da mano',
   desanclaje:'Desanclaje / descenso'
 };
+/* Datos de la tarea (solo para "Preparación de la tarea") — la turbina queda asignada al registro */
+const PREP_CAMPOS=[
+  {key:'proyecto', label:'Proyecto'},
+  {key:'turbina',  label:'Turbina'},
+  {key:'pala',     label:'Pala'},
+  {key:'concha',   label:'Concha'},
+  {key:'radio',    label:'Radio'}
+];
 let overtimeMin=0, jornadaCerrada=false;
 let otEstadoHoy=null;            // 'pendiente' | 'aprobado' | 'rechazado' — ajusta las horas laboradas
 let autEstadoHoy=null;          // autorización del día (sábado/domingo/festivo): 'autorizada' | ...
@@ -1426,6 +1597,7 @@ async function entrarApp(rec){
   try { const jh=await DB.jornadaHoy(); if(jh){ otEstadoHoy=jh.otEstado; autEstadoHoy=jh.autEstado; if(jh.otMin) overtimeMin=jh.otMin; } } catch(e){}
   try { etapas = await DB.cargarEtapasHoy() || []; } catch(e){ etapas=[]; }
   try { descansos = await DB.cargarDescansosHoy() || []; } catch(e){ descansos=[]; }
+  try { await cargarMiGrupo(); } catch(e){ miGrupo=null; miRolGrupo=null; aprobHoy=null; }
   await cargarAcumuladoPrevio();   // acumulado L–V de la semana
   misSolicitudes = await DB.misSolicitudes(U.id);
   startApp();
@@ -1913,6 +2085,7 @@ function fmtDur(m){ if(m==null) return '—'; m=Math.round(m); const h=Math.floo
 function etToggleEtapaRep(){
   const t=document.getElementById('etTipo').value;
   document.getElementById('etRepWrap').style.display = (t==='efectivo_turbina')? 'block':'none';
+  const pw=document.getElementById('etPrepWrap'); if(pw) pw.style.display = (t==='preparacion_tarea')? 'block':'none';
 }
 function openEtapa(id){
   // llena los selects
@@ -1927,6 +2100,7 @@ function openEtapa(id){
   document.getElementById('etIni').value = ex? fmt(ex.ini) : fmt(nowMin());
   document.getElementById('etFin').value = (ex && ex.fin!=null)? fmt(ex.fin) : '';
   document.getElementById('etDesc').value = ex? (ex.desc||'') : '';
+  PREP_CAMPOS.forEach(c=>{ const el=document.getElementById('et'+c.key.charAt(0).toUpperCase()+c.key.slice(1)); if(el) el.value = ex? (ex[c.key]||'') : ''; });
   document.getElementById('etTitulo').textContent = ex? 'Editar tiempo' : 'Registrar tiempo';
   etToggleEtapaRep();
   document.getElementById('ovEtapa').classList.remove('hidden');
@@ -1938,15 +2112,22 @@ function saveEtapa(){
   const desc=document.getElementById('etDesc').value.trim();
   if(!iv || !fv){ alert('Indica la hora de inicio y de fin.'); return; }
   if(tipo==='efectivo_turbina' && !etapaRep){ alert('Selecciona la etapa de la reparación.'); return; }
+  // datos de la tarea (solo preparación)
+  const prep={};
+  if(tipo==='preparacion_tarea'){
+    PREP_CAMPOS.forEach(c=>{ const el=document.getElementById('et'+c.key.charAt(0).toUpperCase()+c.key.slice(1)); prep[c.key]=el?el.value.trim():''; });
+    if(!prep.turbina){ alert('Indica la Turbina a la que se asigna el registro.'); return; }
+  }
   const ini=parseInt(iv.split(':')[0])*60+parseInt(iv.split(':')[1]);
   const fin=parseInt(fv.split(':')[0])*60+parseInt(fv.split(':')[1]);
   if(fin<=ini){ alert('La hora de fin debe ser posterior a la de inicio.'); return; }
   const min=fin-ini;
   let e = etCtx && etCtx.id ? etapas.find(x=>(x.id||x._cid)===etCtx.id) : null;
-  if(e){ e.tipo=tipo; e.etapaRep=etapaRep; e.ini=ini; e.fin=fin; e.min=min; e.desc=desc; }
+  if(e){ e.tipo=tipo; e.etapaRep=etapaRep; e.ini=ini; e.fin=fin; e.min=min; e.desc=desc; PREP_CAMPOS.forEach(c=>e[c.key]=prep[c.key]||''); }
   else {
     const orden = etapas.length? Math.max(...etapas.map(x=>x.orden||0))+1 : 0;
     e={ _cid:'c'+Date.now(), tipo, etapaRep, ini, fin, min, desc, orden };
+    PREP_CAMPOS.forEach(c=>e[c.key]=prep[c.key]||'');
     etapas.push(e);
   }
   DB.guardarEtapa(e);
@@ -1959,31 +2140,129 @@ function eliminarEtapa(id){
   DB.eliminarEtapa(e); renderEtapas(); updateAcc();
   if(view==='valid'||view==='resumen') render();
 }
+/* resumen legible de los datos de la tarea (preparación) */
+function prepResumen(e){
+  return PREP_CAMPOS.filter(c=>e[c.key]).map(c=>c.label+' '+e[c.key]).join(' · ');
+}
 /* total de minutos por tipo de tiempo */
 function totalesPorTipo(lista){
   const t={}; (lista||etapas).forEach(e=>{ t[e.tipo]=(t[e.tipo]||0)+(e.min||0); }); return t;
 }
+/* ---- grupos de técnicos: carga del grupo del usuario ---- */
+let nombreMap={};
+function nombreDe(id){ return (nombreMap[id] && nombreMap[id].nombre) || '—'; }
+function nominaDe(id){ return (nombreMap[id] && nombreMap[id].nomina) || ''; }
+async function cargarMiGrupo(){
+  miGrupo=null; miRolGrupo=null; aprobHoy=null; etapasGrupo=[]; nombreMap={};
+  if(!es_campo || !SB_LIVE) return;
+  GRUPOS = await DB.cargarGrupos();
+  const g = GRUPOS.find(x=>x.registradorId===U.id || (x.miembros||[]).includes(U.id));
+  if(!g) return;
+  miGrupo=g;
+  miRolGrupo = (g.registradorId===U.id)? 'registrador':'miembro';
+  const ids=[...new Set([g.registradorId, ...(g.miembros||[])].filter(Boolean))];
+  (await DB.nombresDe(ids)).forEach(x=>nombreMap[x.id]=x);
+  aprobHoy = await DB.cargarAprobacion(g.id, hoyISO());
+  if(miRolGrupo==='miembro') etapasGrupo = await DB.cargarEtapasDe(g.registradorId, hoyISO());
+}
+// true cuando el día ya se envió o aprobó → no se pueden editar los tiempos
+function etapasBloqueadas(){ return !!(aprobHoy && ['pendiente_tecnicos','pendiente_supervisor','aprobado'].includes(aprobHoy.estado)); }
+const APR_INFO={
+  borrador:{t:'Sin enviar',c:'amber',d:'Captura los tiempos y envíalos a aprobación.'},
+  pendiente_tecnicos:{t:'Pendiente de los técnicos',c:'amber',d:'Esperando la aprobación de los técnicos del grupo.'},
+  pendiente_supervisor:{t:'Pendiente del supervisor',c:'amber',d:'Los técnicos aprobaron. Falta la aprobación del supervisor.'},
+  aprobado:{t:'Aprobado',c:'green',d:'El supervisor aprobó. El Excel ya se puede descargar.'},
+  rechazado:{t:'Rechazado',c:'red',d:'Corrige los tiempos y vuelve a enviar.'}
+};
+function renderEtapasLista(lista, editable){
+  if(!lista.length) return '<div class="empty">Aún no hay tiempos registrados.</div>';
+  let html='';
+  lista.slice().sort((a,b)=>(a.ini||0)-(b.ini||0)).forEach(e=>{
+    const id=e.id||e._cid;
+    const sub = (e.tipo==='efectivo_turbina' && e.etapaRep)? (ETAPAS_REP[e.etapaRep]||e.etapaRep)
+              : (e.tipo==='preparacion_tarea')? (prepResumen(e)||e.desc||'') : (e.desc||'');
+    html+='<div class="hist-item" style="padding:9px 11px"><div class="ic prog">🛠️</div>'+
+      '<div class="info"><b>'+(TIPOS_TEC[e.tipo]||e.tipo)+'</b><span>'+fmt(e.ini)+' – '+fmt(e.fin)+(sub?(' · '+sub):'')+'</span></div>'+
+      '<div class="tm">'+fmtDur(e.min)+(editable?(' <button class="mini" style="margin-left:4px;padding:2px 7px" onclick="openEtapa(\''+id+'\')">✎</button>'+
+        ' <button class="mini red" style="padding:2px 7px" onclick="eliminarEtapa(\''+id+'\')">✕</button>'):'')+'</div></div>';
+  });
+  return html;
+}
+function bannerAprobacion(){
+  const est = aprobHoy? aprobHoy.estado : 'borrador';
+  const info = APR_INFO[est]||APR_INFO.borrador;
+  let h='<div class="card" style="padding:12px;margin-bottom:12px">'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">'+
+    '<b>Grupo: '+(miGrupo.nombre||'—')+'</b><span class="chip '+info.c+'">'+info.t+'</span></div>'+
+    '<div class="muted-note" style="margin-top:6px">Tú eres el <b>registrador</b> · capturas por todo el grupo. '+info.d+'</div>';
+  if((est==='rechazado') && aprobHoy && aprobHoy.comentarioRechazo)
+    h+='<div class="muted-note" style="color:var(--red);margin-top:4px">Motivo del rechazo: '+aprobHoy.comentarioRechazo+'</div>';
+  const puedeEnviar=(est==='borrador'||est==='rechazado');
+  if(puedeEnviar)
+    h+='<button class="btn primary" style="width:100%;margin-top:10px" onclick="enviarAprobacionUI()"'+(etapas.length?'':' disabled')+'>📤 Enviar registro a aprobación</button>';
+  h+='</div>';
+  return h;
+}
 function renderEtapas(){
   const el=document.getElementById('etapasList'); if(!el) return;
-  let html='<button class="btn primary" style="width:100%;margin-bottom:10px" onclick="openEtapa(null)">＋ Registrar tiempo</button>';
-  if(!etapas.length){
-    html+='<div class="empty">Aún no registras tiempos. Usa "Registrar tiempo" para capturar tu actividad en sitio.</div>';
-  } else {
-    etapas.slice().sort((a,b)=>(a.ini||0)-(b.ini||0)).forEach(e=>{
-      const id=e.id||e._cid;
-      const sub = (e.tipo==='efectivo_turbina' && e.etapaRep)? (ETAPAS_REP[e.etapaRep]||e.etapaRep) : (e.desc||'');
-      html+='<div class="hist-item" style="padding:9px 11px"><div class="ic prog">🛠️</div>'+
-        '<div class="info"><b>'+(TIPOS_TEC[e.tipo]||e.tipo)+'</b><span>'+fmt(e.ini)+' – '+fmt(e.fin)+(sub?(' · '+sub):'')+'</span></div>'+
-        '<div class="tm">'+fmtDur(e.min)+' <button class="mini" style="margin-left:4px;padding:2px 7px" onclick="openEtapa(\''+id+'\')">✎</button>'+
-        ' <button class="mini red" style="padding:2px 7px" onclick="eliminarEtapa(\''+id+'\')">✕</button></div></div>';
-    });
-  }
+  if(miRolGrupo==='miembro'){ renderMiembroAprob(); return; }
+  const bloqueado=etapasBloqueadas();
+  let html='';
+  if(miGrupo) html+=bannerAprobacion();
+  if(!bloqueado) html+='<button class="btn primary" style="width:100%;margin-bottom:10px" onclick="openEtapa(null)">＋ Registrar tiempo</button>';
+  html+=renderEtapasLista(etapas, !bloqueado);
   el.innerHTML=html;
-  // resumen por tipo
   const tot=totalesPorTipo();
   document.getElementById('intervalosBox').innerHTML=
     '<div style="font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--gray);font-weight:700;margin-bottom:6px">Tiempos por tipo</div>'+
     Object.keys(TIPOS_TEC).map(k=>'<div class="lg"><span>'+TIPOS_TEC[k]+'</span><b>'+fmtDur(tot[k]||null)+'</b></div>').join('');
+}
+function renderMiembroAprob(){
+  const el=document.getElementById('etapasList'); if(!el) return;
+  const est = aprobHoy? aprobHoy.estado : null;
+  let html='<div class="card" style="padding:12px;margin-bottom:12px">'+
+    '<b>Grupo: '+(miGrupo.nombre||'—')+'</b><br><span class="muted-note">Registra: '+nombreDe(miGrupo.registradorId)+' · Nómina '+nominaDe(miGrupo.registradorId)+'</span></div>';
+  if(!aprobHoy || est==='borrador'){
+    html+='<div class="empty">El registrador aún no envía el registro de hoy a aprobación.</div>';
+    el.innerHTML=html; document.getElementById('intervalosBox').innerHTML=''; return;
+  }
+  html+='<div style="font-weight:700;margin:2px 0 8px">Registro del día — revísalo y apruébalo</div>';
+  html+=renderEtapasLista(etapasGrupo, false);
+  const mine=(aprobHoy.miembros||[]).find(m=>m.empId===U.id);
+  if(est==='aprobado') html+='<div class="muted-note" style="color:var(--green);margin-top:10px">✅ Día aprobado por el supervisor.</div>';
+  else if(mine && mine.aprobado===true) html+='<div class="muted-note" style="margin-top:10px">Ya aprobaste. Esperando a los demás técnicos / al supervisor.</div>';
+  else if(mine && mine.aprobado===false) html+='<div class="muted-note" style="color:var(--red);margin-top:10px">Rechazaste este registro.'+(mine.comentario?(' Motivo: '+mine.comentario):'')+'</div>';
+  else if(est==='rechazado') html+='<div class="muted-note" style="color:var(--red);margin-top:10px">Registro rechazado. Esperando la corrección del registrador.</div>';
+  else {
+    html+='<input type="text" id="miembroCmt" placeholder="Comentario (obligatorio si rechazas)" style="width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;margin:10px 0 8px;color:var(--blue);background:var(--paper)">'+
+      '<div style="display:flex;gap:8px"><button class="btn green" style="flex:1" onclick="miembroAprobarUI(true)">Aprobar</button>'+
+      '<button class="btn red" style="flex:1" onclick="miembroAprobarUI(false)">Rechazar</button></div>';
+  }
+  el.innerHTML=html;
+  const tot=recTotalesPorTipo({etapas:etapasGrupo});
+  document.getElementById('intervalosBox').innerHTML=
+    '<div style="font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--gray);font-weight:700;margin-bottom:6px">Tiempos por tipo</div>'+
+    Object.keys(TIPOS_TEC).map(k=>'<div class="lg"><span>'+TIPOS_TEC[k]+'</span><b>'+fmtDur(tot[k]||null)+'</b></div>').join('');
+}
+async function enviarAprobacionUI(){
+  if(!miGrupo) return;
+  if(!etapas.length){ alert('Captura al menos un tiempo antes de enviar.'); return; }
+  if(!confirm('¿Enviar el registro del día a aprobación? Ya no podrás editar los tiempos hasta que se apruebe o se rechace.')) return;
+  const r=await DB.enviarAprobacion(miGrupo, hoyISO());
+  if(r && r.error){ alert('No se pudo enviar: '+(r.error.message||r.error)); return; }
+  aprobHoy=await DB.cargarAprobacion(miGrupo.id, hoyISO());
+  renderEtapas();
+  addNotif('blue','📤','Registro enviado a aprobación de los técnicos del grupo.');
+}
+async function miembroAprobarUI(aprob){
+  if(!aprobHoy) return;
+  const cmt=(document.getElementById('miembroCmt')||{}).value||'';
+  if(!aprob && !cmt.trim()){ alert('Para rechazar, agrega el comentario para que el registrador lo revise.'); return; }
+  const r=await DB.aprobarMiembro(aprobHoy, U.id, aprob, cmt.trim());
+  if(r && r.error){ alert('No se pudo registrar tu respuesta: '+(r.error.message||r.error)); return; }
+  aprobHoy=await DB.cargarAprobacion(miGrupo.id, hoyISO());
+  renderMiembroAprob();
+  addNotif(aprob?'green':'warn',aprob?'✅':'⚠️', aprob?'Aprobaste el registro del día.':'Rechazaste el registro; el registrador deberá corregirlo.');
 }
 function closeModal(id){ document.getElementById(id).classList.add('hidden'); }
 
@@ -2175,6 +2454,7 @@ const DIAS=['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
 const ST_LBL={completo:'Completo',incompleto:'Incompleto',vacaciones:'Vacaciones',pendiente:'—',descanso:'Descanso'};
 const TIPO_LBL={entrada:'Entrada',iniComida:'Inicio de comida',finComida:'Fin de comida',salida:'Salida'};
 let curWeek=0, adminStore={}, detCtx=null, admView='reg', editId=null, bulkText='';
+let GRUPOS_ADMIN=[], grpCtx=null;   // grupos cargados en el panel del supervisor
 function debounce(fn,ms){ let t; return function(){ clearTimeout(t); t=setTimeout(fn,ms); }; }
 const buscarReg = debounce(()=>renderReg(), 300);
 const buscarEmp = debounce(()=>renderEmp(), 300);
@@ -2210,9 +2490,9 @@ function showView(v){
 }
 function admSub(which){
   admView=which;
-  const panes={reg:'paneReg',sol:'paneSol',inc:'paneInc',emp:'paneEmp',fest:'paneFest',aus:'paneAus',vac:'paneVac'};
-  const subs ={reg:'subReg',sol:'subSol',inc:'subInc',emp:'subEmp',fest:'subFest',aus:'subAus',vac:'subVac'};
-  const titulos={reg:'Panel de registros',sol:'Solicitudes',inc:'Incidencias',emp:'Empleados',fest:'Festivos',aus:'Incidencias',vac:'Vacaciones'};
+  const panes={reg:'paneReg',sol:'paneSol',inc:'paneInc',emp:'paneEmp',fest:'paneFest',aus:'paneAus',vac:'paneVac',grp:'paneGrp'};
+  const subs ={reg:'subReg',sol:'subSol',inc:'subInc',emp:'subEmp',fest:'subFest',aus:'subAus',vac:'subVac',grp:'subGrp'};
+  const titulos={reg:'Panel de registros',sol:'Solicitudes',inc:'Incidencias',emp:'Empleados',fest:'Festivos',aus:'Incidencias',vac:'Vacaciones',grp:'Grupos de técnicos'};
   Object.entries(panes).forEach(([k,id])=>{ const el=document.getElementById(id); if(el) el.style.display = (k===which)?'block':'none'; });
   Object.entries(subs ).forEach(([k,id])=>{ const el=document.getElementById(id); if(el) el.classList.toggle('on',k===which); });
   document.getElementById('admTitle').textContent = titulos[which]||'Panel';
@@ -2223,6 +2503,111 @@ function admSub(which){
   else if(which==='fest') renderFest();
   else if(which==='aus') renderAus();
   else if(which==='vac') renderVac();
+  else if(which==='grp') renderGrupos();
+}
+/* ================= GRUPOS DE TÉCNICOS (SUPERVISOR) ================= */
+function tecnicosActivos(){ return EMP.filter(e=>e.clas==='operativo' && e.activo); }
+function nombreGrp(id){ const e=EMP.find(x=>x.id===id); return e? (e.nombre+' ('+e.nomina+')') : '—'; }
+function esAdminRHUser(){ return !!(U && (U.es_rh || rolDe(U.numero_nomina||U.nomina))); }
+async function renderGrupos(){
+  const cont=document.getElementById('gruposList'); if(cont) cont.innerHTML='<div class="empty">Cargando grupos…</div>';
+  GRUPOS_ADMIN = await DB.cargarGrupos();
+  await renderAprobPendientes();
+  const mis = GRUPOS_ADMIN.filter(g=> esAdminRHUser() || g.supervisorId===U.id);
+  if(!mis.length){ if(cont) cont.innerHTML='<div class="empty">Aún no hay grupos. Usa "Crear grupo".</div>'; return; }
+  let html='';
+  mis.forEach(g=>{
+    const m=(g.miembros||[]);
+    html+='<div class="card" style="padding:12px;margin-bottom:10px">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">'+
+        '<b>'+g.nombre+'</b>'+
+        '<span><button class="mini" style="padding:3px 9px" onclick="openGrupo(\''+g.id+'\')">✎ Editar</button> '+
+        '<button class="mini red" style="padding:3px 9px" onclick="eliminarGrupoUI(\''+g.id+'\')">✕</button></span></div>'+
+      '<div class="muted-note" style="margin-top:6px">Registrador: <b>'+nombreGrp(g.registradorId)+'</b> · '+m.length+' técnico(s)</div>'+
+      '<div class="muted-note" style="margin-top:2px">'+m.map(id=>nombreGrp(id)).join(', ')+'</div></div>';
+  });
+  if(cont) cont.innerHTML=html;
+}
+async function renderAprobPendientes(){
+  const box=document.getElementById('aprobPendBox'); if(!box) return;
+  const mis=GRUPOS_ADMIN.filter(g=> esAdminRHUser() || g.supervisorId===U.id);
+  const ids=mis.map(g=>g.id);
+  const aprs=await DB.cargarAprobacionesSup(ids, hoyISO());
+  const pend=aprs.filter(a=>a.estado==='pendiente_supervisor');
+  const badge=document.getElementById('badgeGrp'); if(badge){ badge.textContent=pend.length||''; badge.style.display=pend.length?'inline-block':'none'; }
+  if(!pend.length){ box.innerHTML=''; return; }
+  let html='<div class="card" style="padding:12px;margin-bottom:12px;border:1.5px solid var(--amber)"><b>Aprobaciones pendientes (hoy)</b>';
+  pend.forEach(a=>{
+    const g=mis.find(x=>x.id===a.grupoId)||{};
+    html+='<div style="border-top:1px solid var(--line);margin-top:8px;padding-top:8px">'+
+      '<div style="font-weight:600">'+(g.nombre||'Grupo')+' · Registrador: '+nombreGrp(g.registradorId)+'</div>'+
+      '<div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">'+
+        '<button class="btn ghost" style="flex:1;min-width:110px" onclick="verRegistroGrupo(\''+g.registradorId+'\')">Ver registro</button>'+
+        '<button class="btn green" style="flex:1;min-width:110px" onclick="aprobarSupUI(\''+a.id+'\',true)">Aprobar</button>'+
+        '<button class="btn red" style="flex:1;min-width:110px" onclick="aprobarSupUI(\''+a.id+'\',false)">Rechazar</button></div>'+
+      '<input type="text" id="supCmt_'+a.id+'" placeholder="Comentario (obligatorio si rechazas)" style="width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:10px;font-size:13px;margin-top:6px;color:var(--blue);background:var(--paper)"></div>';
+  });
+  html+='</div>';
+  box.innerHTML=html;
+}
+async function verRegistroGrupo(regId){
+  const lista=await DB.cargarEtapasDe(regId, hoyISO());
+  let h;
+  if(!lista.length){ h='<div class="empty">Sin tiempos capturados.</div>'; }
+  else {
+    h=renderEtapasLista(lista,false);
+    const tot=recTotalesPorTipo({etapas:lista});
+    h+='<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:8px">'+
+      Object.keys(TIPOS_TEC).map(k=>tot[k]?('<div class="lg"><span>'+TIPOS_TEC[k]+'</span><b>'+fmtDur(tot[k])+'</b></div>'):'').join('')+'</div>';
+  }
+  document.getElementById('infoTitle').textContent='Registro del día — '+nombreGrp(regId);
+  document.getElementById('infoBody').innerHTML=h;
+  document.getElementById('ovInfo').classList.remove('hidden');
+}
+async function aprobarSupUI(aprobId, aprob){
+  const cmt=(document.getElementById('supCmt_'+aprobId)||{}).value||'';
+  if(!aprob && !cmt.trim()){ alert('Para rechazar, agrega el comentario para que el registrador lo revise.'); return; }
+  if(aprob && !confirm('¿Aprobar el registro del día de este grupo? Las horas se tomarán como definitivas y se habilitará el Excel.')) return;
+  const r=await DB.aprobarSupervisor(aprobId, aprob, cmt.trim());
+  if(r && r.error){ alert('No se pudo guardar: '+(r.error.message||r.error)); return; }
+  renderGrupos();
+}
+function openGrupo(id){
+  const tecs=tecnicosActivos();
+  const reg=document.getElementById('grpRegistrador');
+  reg.innerHTML='<option value="">— selecciona —</option>'+tecs.map(e=>'<option value="'+e.id+'">'+e.nombre+' · '+e.nomina+'</option>').join('');
+  const g = id? GRUPOS_ADMIN.find(x=>x.id===id):null;
+  grpCtx = g? {id:g.id}:{id:null};
+  document.getElementById('grpTitulo').textContent = g?'Editar grupo':'Crear grupo';
+  document.getElementById('grpNombre').value = g? g.nombre:'';
+  reg.value = g? (g.registradorId||''):'';
+  document.getElementById('grpBuscar').value='';
+  const sel = g? new Set(g.miembros||[]) : new Set();
+  document.getElementById('grpMiembros').innerHTML = tecs.map(e=>{
+    const ch = sel.has(e.id)?'checked':'';
+    return '<label style="display:flex;align-items:center;gap:8px;font-weight:500;padding:4px 2px;margin:0"><input type="checkbox" class="grpM" value="'+e.id+'" '+ch+' style="width:16px;height:16px"> '+e.nombre+' · '+e.nomina+'</label>';
+  }).join('');
+  document.getElementById('ovGrupo').classList.remove('hidden');
+}
+function filtrarGrpMiembros(){
+  const q=norm((document.getElementById('grpBuscar')||{}).value||'');
+  document.querySelectorAll('#grpMiembros label').forEach(l=>{ l.style.display=(!q||norm(l.textContent).includes(q))?'flex':'none'; });
+}
+async function saveGrupo(){
+  const nombre=document.getElementById('grpNombre').value.trim();
+  const registradorId=document.getElementById('grpRegistrador').value;
+  if(!nombre){ alert('Indica el nombre del grupo.'); return; }
+  if(!registradorId){ alert('Selecciona el registrador del grupo.'); return; }
+  const miembros=[...document.querySelectorAll('.grpM:checked')].map(c=>c.value);
+  if(!miembros.includes(registradorId)) miembros.push(registradorId);
+  const g={ id:grpCtx&&grpCtx.id, nombre, registradorId, supervisorId:U.id, miembros };
+  const r=await DB.guardarGrupo(g);
+  if(r && r.error){ alert('No se pudo guardar el grupo: '+(r.error.message||r.error)); return; }
+  closeModal('ovGrupo'); renderGrupos();
+}
+async function eliminarGrupoUI(id){
+  if(!confirm('¿Desactivar este grupo? Los registros anteriores no se borran.')) return;
+  await DB.eliminarGrupo(id); renderGrupos();
 }
 function populatePaisSelects(){
   const paises=[...new Set(EMP.map(e=>e.pais))].sort();
@@ -2465,7 +2850,8 @@ function openDet(empId,weekKey,dayIdx){
   if(rec.etapas && rec.etapas.length){
     const lista=rec.etapas.slice().sort((a,b)=>(a.ini||0)-(b.ini||0));
     h+='<div class="det-row" style="margin-top:10px;border-top:1px solid var(--line);padding-top:12px"><span>🛠️ Jornada del técnico</span></div>';
-    lista.forEach(e=>{ const sub=(e.tipo==='efectivo_turbina'&&e.etapaRep)?(ETAPAS_REP[e.etapaRep]||e.etapaRep):(e.desc||'');
+    lista.forEach(e=>{ const sub=(e.tipo==='efectivo_turbina'&&e.etapaRep)?(ETAPAS_REP[e.etapaRep]||e.etapaRep)
+        :(e.tipo==='preparacion_tarea')?(prepResumen(e)||e.desc||''):(e.desc||'');
       h+='<div class="det-row"><span>'+fmt(e.ini)+'–'+fmt(e.fin)+' · '+(TIPOS_TEC[e.tipo]||e.tipo)+(sub?(' — '+sub):'')+'</span><span class="tm">'+fmtDur(e.min)+'</span></div>'; });
     const tot=recTotalesPorTipo(rec);
     Object.keys(TIPOS_TEC).forEach(k=>{ if(tot[k]) h+='<div class="det-row"><span><b>'+TIPOS_TEC[k]+'</b></span><span class="tm">'+fmtDur(tot[k])+'</span></div>'; });
@@ -2977,35 +3363,53 @@ async function descargarLibro(sheet, titulo, subtitulo, rows, colMeta, fname, gr
 // El propio técnico exporta su jornada del día
 async function exportTecnicoMiDia(){
   if(typeof ExcelJS==='undefined'){ alert('No se pudo cargar la librería de Excel (revisa tu conexión).'); return; }
-  const rows=[['Tipo de tiempo','Etapa de la reparación','Inicio','Fin','Duración (min)','Descripción']];
-  etapas.slice().sort((a,b)=>(a.ini||0)-(b.ini||0)).forEach(e=>rows.push([
+  // en grupo: el Excel se habilita únicamente cuando el día está APROBADO por el supervisor
+  if(miGrupo && !(aprobHoy && aprobHoy.estado==='aprobado')){
+    alert('El Excel se habilita cuando el supervisor aprueba el registro del día.'); return;
+  }
+  const fuente = (miRolGrupo==='miembro')? etapasGrupo : etapas;
+  const rows=[['Tipo de tiempo','Etapa de la reparación','Proyecto','Turbina','Pala','Concha','Radio','Inicio','Fin','Duración (min)','Descripción']];
+  fuente.slice().sort((a,b)=>(a.ini||0)-(b.ini||0)).forEach(e=>rows.push([
     TIPOS_TEC[e.tipo]||e.tipo,
     (e.tipo==='efectivo_turbina' && e.etapaRep)?(ETAPAS_REP[e.etapaRep]||e.etapaRep):'',
+    e.proyecto||'', e.turbina||'', e.pala||'', e.concha||'', e.radio||'',
     fmt(e.ini), fmt(e.fin), e.min||0, e.desc||'' ]));
-  descansos.forEach((d,i)=>rows.push(['Descanso '+(i+1),'',fmt(d.ini),fmt(d.fin),(d.dur||0),'']));
+  descansos.forEach((d,i)=>rows.push(['Descanso '+(i+1),'','','','','','',fmt(d.ini),fmt(d.fin),(d.dur||0),'']));
+  const grupos=[{label:'Actividad',span:2},{label:'Datos de la tarea',span:5},{label:'Tiempo',span:3},{label:'Detalle',span:1}];
   await descargarLibro('Técnico', 'SPIE · Jornada del técnico',
     (U?U.nombre:'')+' · '+new Date().toLocaleDateString('es-MX'), rows,
-    [{w:26},{w:34},{w:10},{w:10},{w:14,numFmt:'0'},{w:40}], 'jornada_tecnico_'+hoyISO()+'.xlsx');
+    [{w:26},{w:34},{w:16},{w:12},{w:9},{w:12},{w:9},{w:10},{w:10},{w:14,numFmt:'0'},{w:40}], 'jornada_tecnico_'+hoyISO()+'.xlsx', grupos);
 }
 // El panel exporta la jornada del técnico de la semana (una fila por actividad)
 async function exportTecnicoPanel(){
   if(typeof ExcelJS==='undefined'){ alert('No se pudo cargar la librería de Excel (revisa tu conexión).'); return; }
-  const rows=[['Empleado','Nómina','País','Fecha','Día','Tipo de tiempo','Etapa de la reparación','Inicio','Fin','Duración (min)','Descripción']];
+  const rows=[['Empleado','Nómina','País','Grupo','Fecha','Día','Tipo de tiempo','Etapa de la reparación','Proyecto','Turbina','Pala','Concha','Radio','Inicio','Fin','Duración (min)','Descripción']];
   const mon=mondayOf(curWeek), sun=new Date(mon); sun.setDate(mon.getDate()+6);
   const data=await ensureWeek(mon);
-  regEmployees().forEach(e=>data[e.id].forEach((rec,i)=>{
-    if(!(rec.etapas && rec.etapas.length)) return;
-    const day=new Date(mon); day.setDate(mon.getDate()+i);
-    rec.etapas.slice().sort((a,b)=>(a.ini||0)-(b.ini||0)).forEach(x=>rows.push([
-      e.nombre,e.nomina,e.pais,ymd(day),DIAS[i],
-      TIPOS_TEC[x.tipo]||x.tipo,
-      (x.tipo==='efectivo_turbina' && x.etapaRep)?(ETAPAS_REP[x.etapaRep]||x.etapaRep):'',
-      fmt(x.ini), fmt(x.fin), x.min||0, x.desc||'' ]));
-  }));
+  // grupos: cada miembro comparte la captura del registrador → se unifican todos los técnicos
+  const grupos=await DB.cargarGrupos();
+  const grupoDe={}; grupos.forEach(g=>(g.miembros||[]).forEach(id=>{ grupoDe[id]=g; }));
+  regEmployees().forEach(e=>{
+    const g=grupoDe[e.id];
+    const regId = g? g.registradorId : e.id;
+    const fuenteRec = (g && regId!==e.id && data[regId]) ? data[regId] : data[e.id];
+    (data[e.id]||[]).forEach((rec,i)=>{
+      const lista = (fuenteRec[i] && fuenteRec[i].etapas) ? fuenteRec[i].etapas : [];
+      if(!lista.length) return;
+      const day=new Date(mon); day.setDate(mon.getDate()+i);
+      lista.slice().sort((a,b)=>(a.ini||0)-(b.ini||0)).forEach(x=>rows.push([
+        e.nombre,e.nomina,e.pais,(g?g.nombre:''),ymd(day),DIAS[i],
+        TIPOS_TEC[x.tipo]||x.tipo,
+        (x.tipo==='efectivo_turbina' && x.etapaRep)?(ETAPAS_REP[x.etapaRep]||x.etapaRep):'',
+        x.proyecto||'', x.turbina||'', x.pala||'', x.concha||'', x.radio||'',
+        fmt(x.ini), fmt(x.fin), x.min||0, x.desc||'' ]));
+    });
+  });
+  const secciones=[{label:'Identificación',span:6},{label:'Actividad',span:2},{label:'Datos de la tarea',span:5},{label:'Tiempo',span:3},{label:'Detalle',span:1}];
   await descargarLibro('Jornada del técnico','SPIE · Jornada del técnico',
     'Semana del '+ymd(mon)+' al '+ymd(sun)+' · Generado el '+new Date().toLocaleString('es-MX'), rows,
-    [{w:24},{w:11},{w:14},{w:12},{w:7},{w:26},{w:34},{w:10},{w:10},{w:14,numFmt:'0'},{w:40}],
-    'jornada_tecnico_semana_'+ymd(mon)+'.xlsx');
+    [{w:24},{w:11},{w:14},{w:18},{w:12},{w:7},{w:26},{w:34},{w:16},{w:12},{w:9},{w:12},{w:9},{w:10},{w:10},{w:14,numFmt:'0'},{w:40}],
+    'jornada_tecnico_semana_'+ymd(mon)+'.xlsx', secciones);
 }
 </script>
 </body>
