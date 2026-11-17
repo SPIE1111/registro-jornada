@@ -592,7 +592,8 @@
       <label>Nombre del grupo</label>
       <input type="text" id="grpNombre" placeholder="Ej. Cuadrilla Turbina 12" style="width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;color:var(--blue);background:var(--paper);margin-bottom:12px">
       <label>Registrador (captura por todo el grupo)</label>
-      <select id="grpRegistrador" style="width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;color:var(--blue);background:var(--paper);margin-bottom:12px"></select>
+      <input id="grpRegBuscar" type="text" placeholder="Buscar por nombre o nómina…" oninput="filtrarGrpReg()" style="width:100%;margin-bottom:8px;padding:9px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;color:var(--blue);background:var(--paper)">
+      <div id="grpRegList" style="max-height:160px;overflow:auto;border:1.5px solid var(--line);border-radius:10px;padding:8px;background:var(--paper);margin-bottom:12px"></div>
       <label>Miembros del grupo (por número de nómina)</label>
       <input id="grpBuscar" type="text" placeholder="Buscar por nombre o nómina…" oninput="filtrarGrpMiembros()" style="width:100%;margin-bottom:8px;padding:9px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;color:var(--blue);background:var(--paper)">
       <div id="grpMiembros" style="max-height:220px;overflow:auto;border:1.5px solid var(--line);border-radius:10px;padding:8px;background:var(--paper)"></div>
@@ -782,7 +783,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Si el usuario llegó desde el enlace del correo (?reset=token), muestra el formulario de nueva contraseña
   try{ mostrarResetDesdeURL(); }catch(e){ console.warn(e); }
 });
-const APP_VERSION='v10 · 17-nov-2026 (Excel del técnico deshabilitado hasta aprobación · sin registro de jornada en vacaciones/ausencia)';
+const APP_VERSION='v11 · 17-nov-2026 (Vacaciones/permiso/incapacidad = 8 h · Excel incluye esos días · buscador de registrador · Excel técnico estricto por aprobación)';
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
 function hoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -1409,6 +1410,7 @@ const COMIDA_BASE = 13*60;    // 13:00
 const JORNADA_SPAN = 9*60;    // 9 h (entrada -> salida planeada)
 const SALIDA_FIJA = 17*60+30; // 17:30 — hora de salida fija; se registra en automático
 const COMIDA_DUR = 60;        // duración planeada de comida
+const HORAS_AUSENCIA = 8;     // vacaciones / permiso / incapacidad cuentan como 8 h laboradas
 
 /* ================= ESTADO ================= */
 let U=null, es_campo=false;
@@ -2223,13 +2225,17 @@ function actualizarBtnExpTec(){
   const btn=document.getElementById('btnExpTec'); const nota=document.getElementById('expTecNota');
   if(!btn) return;
   const aprobado = !!(aprobHoy && aprobHoy.estado==='aprobado');
-  // habilitado solo si: no hay ausencia, y (no está en grupo  ó  el día ya fue aprobado por el supervisor)
-  const hab = !tecnicoBloqueadoPorAusencia() && (!miGrupo || aprobado);
+  // el Excel del técnico se habilita ÚNICAMENTE cuando el supervisor aprobó el registro del día
+  const hab = !tecnicoBloqueadoPorAusencia() && aprobado;
   btn.disabled = !hab;
   btn.style.opacity = hab? '' : '.5';
   btn.style.cursor  = hab? '' : 'not-allowed';
-  if(nota) nota.textContent = (miGrupo && !aprobado && !tecnicoBloqueadoPorAusencia())
-    ? 'El Excel se habilita cuando el supervisor aprueba el registro del día.' : '';
+  if(nota){
+    if(tecnicoBloqueadoPorAusencia()) nota.textContent='';
+    else if(aprobado) nota.textContent='';
+    else if(miGrupo) nota.textContent='El Excel se habilita cuando el supervisor aprueba el registro del día.';
+    else nota.textContent='El Excel se habilita cuando tu supervisor aprueba el registro del día (debes estar en un grupo).';
+  }
 }
 function renderEtapas(){
   const el=document.getElementById('etapasList'); if(!el) return;
@@ -2328,17 +2334,27 @@ async function cargarAcumuladoPrevio(){
     const mon=mondayOf(0); const sun=new Date(mon); sun.setDate(mon.getDate()+6);
     const semana = await DB.cargarSemana([{id:U.id}], ymd(mon), ymd(sun));
     const recs = (semana && semana[U.id]) || [];
+    let cov={}; try{ cov=await coberturaSemana(mon); }catch(e){}
+    const covU = cov[U.id]||{};
     const hoyIdx = (new Date().getDay()+6)%7;   // 0=lunes … 6=domingo
     recs.forEach((rec,i)=>{
       if(i>=hoyIdx) return;                      // hoy y futuro no entran aquí
-      const hr = horasReales(rec); if(hr==null) return;
-      if(i<5) prevSemana += hr;                  // lunes a viernes = base
+      const dd=new Date(mon); dd.setDate(mon.getDate()+i); const marca=covU[ymd(dd)];
+      const hr = horasReales(rec, marca); if(hr==null) return;
+      if(i<5) prevSemana += hr;                  // lunes a viernes = base (incluye vacaciones/permiso/incapacidad = 8 h)
       else if(rec.autEstado==='autorizada') prevSemana += hr;  // sábado/domingo solo si se autorizó
     });
   }catch(e){ console.warn('cargarAcumuladoPrevio', e); }
 }
 function accValues(){
   let ot=overtimeMin/60, baseDia=0;
+  // vacaciones / permiso / incapacidad → el día cuenta como 8 h (no se pierde el conteo)
+  const acredHoy = esVacaciones || !!esIncidencia || (esAusencia && AUS_ACREDITA.has(esAusencia.tipo));
+  if(acredHoy){
+    const today = (esFinde||esFestivo)? 0 : HORAS_AUSENCIA;
+    const tot0=prevSemana+today;
+    return {today, ot:0, tot:tot0, pct:Math.min(100, tot0/META*100)};
+  }
   if(T0!=null && checks.fin_jornada){
     const salida=Math.min(checks.fin_jornada.min, salidaPlan()); // sin extra
     const bruto=Math.max(0, salida - T0);
@@ -2608,13 +2624,17 @@ async function aprobarSupUI(aprobId, aprob){
 }
 function openGrupo(id){
   const tecs=tecnicosActivos();
-  const reg=document.getElementById('grpRegistrador');
-  reg.innerHTML='<option value="">— selecciona —</option>'+tecs.map(e=>'<option value="'+e.id+'">'+e.nombre+' · '+e.nomina+'</option>').join('');
   const g = id? GRUPOS_ADMIN.find(x=>x.id===id):null;
   grpCtx = g? {id:g.id}:{id:null};
   document.getElementById('grpTitulo').textContent = g?'Editar grupo':'Crear grupo';
   document.getElementById('grpNombre').value = g? g.nombre:'';
-  reg.value = g? (g.registradorId||''):'';
+  // registrador: lista con buscador (selección única)
+  const regSel = g? (g.registradorId||''):'';
+  document.getElementById('grpRegBuscar').value='';
+  document.getElementById('grpRegList').innerHTML = tecs.map(e=>{
+    const ch = (e.id===regSel)?'checked':'';
+    return '<label style="display:flex;align-items:center;gap:8px;font-weight:500;padding:4px 2px;margin:0"><input type="radio" name="grpReg" class="grpR" value="'+e.id+'" '+ch+' style="width:16px;height:16px"> '+e.nombre+' · '+e.nomina+'</label>';
+  }).join('');
   document.getElementById('grpBuscar').value='';
   const sel = g? new Set(g.miembros||[]) : new Set();
   document.getElementById('grpMiembros').innerHTML = tecs.map(e=>{
@@ -2623,13 +2643,18 @@ function openGrupo(id){
   }).join('');
   document.getElementById('ovGrupo').classList.remove('hidden');
 }
+function filtrarGrpReg(){
+  const q=norm((document.getElementById('grpRegBuscar')||{}).value||'');
+  document.querySelectorAll('#grpRegList label').forEach(l=>{ l.style.display=(!q||norm(l.textContent).includes(q))?'flex':'none'; });
+}
 function filtrarGrpMiembros(){
   const q=norm((document.getElementById('grpBuscar')||{}).value||'');
   document.querySelectorAll('#grpMiembros label').forEach(l=>{ l.style.display=(!q||norm(l.textContent).includes(q))?'flex':'none'; });
 }
 async function saveGrupo(){
   const nombre=document.getElementById('grpNombre').value.trim();
-  const registradorId=document.getElementById('grpRegistrador').value;
+  const regSelEl=document.querySelector('.grpR:checked');
+  const registradorId=regSelEl? regSelEl.value : '';
   if(!nombre){ alert('Indica el nombre del grupo.'); return; }
   if(!registradorId){ alert('Selecciona el registrador del grupo.'); return; }
   const miembros=[...document.querySelectorAll('.grpM:checked')].map(c=>c.value);
@@ -2657,7 +2682,20 @@ function hhmmToMin(s){ if(!s) return null; const p=String(s).split(':'); const m
 /* horas laboradas reales del día: (salida − entrada − comida), y el tiempo extra solo cuenta si fue APROBADO */
 /* totales de minutos por tipo de tiempo del técnico, para un registro del panel */
 function recTotalesPorTipo(rec){ const t={}; (rec.etapas||[]).forEach(e=>{ t[e.tipo]=(t[e.tipo]||0)+(e.min||0); }); return t; }
-function horasReales(rec){
+// Tipos de ausencia que SÍ se acreditan como 8 h (vacaciones, permisos e incapacidad).
+// Las faltas, suspensiones, abandono, etc. aparecen en el registro pero NO acreditan horas.
+const AUS_ACREDITA=new Set(['incapacidad','permiso','permiso_justificado','permiso_injustificado']);
+function esDiaAcreditado(rec, marca){
+  if(rec && rec.status==='vacaciones') return true;
+  if(marca){
+    if(marca.tipo==='vacaciones') return true;
+    if(marca.tipo==='ausencia') return AUS_ACREDITA.has(marca.sub);
+  }
+  return false;
+}
+function horasReales(rec, marca){
+  // vacaciones / permiso / incapacidad → 8 h, para no perder el conteo de horas laboradas
+  if(esDiaAcreditado(rec, marca)) return HORAS_AUSENCIA;
   // horas laboradas = salida − entrada − comida (la jornada del técnico es un registro aparte)
   const ent=hhmmToMin(rec.entrada), sal=hhmmToMin(rec.salida);
   if(ent==null||sal==null) return null;
@@ -2735,15 +2773,15 @@ function regEmployees(){
    Devuelve { empId: { 'YYYY-MM-DD': {tipo, label} } }. */
 async function coberturaSemana(mon){
   const cov={};
-  const marca=(empId,ds,tipo,label)=>{ (cov[empId]=cov[empId]||{})[ds]={tipo,label}; };
+  const marca=(empId,ds,tipo,label,sub)=>{ (cov[empId]=cov[empId]||{})[ds]={tipo,label,sub}; };
   const days=[]; for(let i=0;i<7;i++){ const dd=new Date(mon); dd.setDate(mon.getDate()+i); days.push(ymd(dd)); }
   try{
     const vac=await DB.cargarVacaciones();
-    (vac||[]).forEach(v=>days.forEach(ds=>{ if(ds>=v.ini && ds<=(v.fin||v.ini)) marca(v.empId,ds,'vacaciones','Vacaciones'); }));
+    (vac||[]).forEach(v=>days.forEach(ds=>{ if(ds>=v.ini && ds<=(v.fin||v.ini)) marca(v.empId,ds,'vacaciones','Vacaciones','vacaciones'); }));
   }catch(e){ console.warn('cov vac',e); }
   try{
     const aus=await DB.cargarAusencias();
-    (aus||[]).forEach(a=>days.forEach(ds=>{ if(ds>=a.ini && ds<=(a.fin||a.ini)) marca(a.empId,ds,'ausencia',TIPO_AUS[a.tipo]||a.tipo); }));
+    (aus||[]).forEach(a=>days.forEach(ds=>{ if(ds>=a.ini && ds<=(a.fin||a.ini)) marca(a.empId,ds,'ausencia',TIPO_AUS[a.tipo]||a.tipo,a.tipo); }));
   }catch(e){ console.warn('cov aus',e); }
   return cov;
 }
@@ -3292,31 +3330,45 @@ async function exportExcel(){
       'Horas laboradas (reales)','Tiempo extra (min)','Tiempo extra (horas)','Resultado tiempo extra','Hora de salida con tiempo extra','Comentario tiempo extra',
       'Requiere autorización','Estado autorización','Comentario autorización','Comentarios']];
     const autL={pendiente:'Pendiente',autorizada:'Autorizada',rechazada:'Rechazada'};
-    const push=(e,rec,day,i)=>{
-      const hr=horasReales(rec);
-      const fz=k=>{ const v=(rec.fuente||{})[k]; return v==='sistema'?'Sistema':(v?'Usuario':'—'); };
+    const push=(e,rec,day,i,marca)=>{
+      const hr=horasReales(rec, marca);
+      const acred = esDiaAcreditado(rec, marca);                 // vacaciones / permiso / incapacidad
+      const estadoTxt = marca? marca.label : ST_LBL[rec.status];
+      const fz=k=>{ if(acred) return 'Sistema'; const v=(rec.fuente||{})[k]; return v==='sistema'?'Sistema':(v?'Usuario':'—'); };
       const teMin   = rec.otMin>0 ? Math.round(rec.otMin) : 0;
       const teHoras = rec.otMin>0 ? Number((rec.otMin/60).toFixed(2)) : 0;
       const teRes = rec.otMin>0 ? (rec.otEstado==='aprobado'?'Con horas extra aprobadas':rec.otEstado==='rechazado'?'Sin horas extra (rechazado)':'Pendiente de aprobación') : 'Sin tiempo extra';
       const salExtra = (rec.otMin>0 && rec.otEstado==='aprobado') ? rec.salida : '—';
-      rows.push([e.nombre,e.nomina,e.pais,(e.clas==='operativo'?'Operativo':'Administrativo'),ymd(day),DIAS[i],ST_LBL[rec.status],
+      rows.push([e.nombre,e.nomina,e.pais,(e.clas==='operativo'?'Operativo':'Administrativo'),ymd(day),DIAS[i],estadoTxt,
         rec.entrada,rec.iniComida,rec.finComida,rec.salida,
         fz('entrada'),fz('iniComida'),fz('finComida'),fz('salida'),
         (hr!=null?Number(hr.toFixed(2)):''),teMin,teHoras,teRes,salExtra,(rec.otComentario||''),
         (rec.reqAut?'Sí':'No'),(rec.reqAut?(autL[rec.autEstado||'pendiente']||rec.autEstado):'—'),(rec.autComentario||''),
-        rec.comments.map(c=>c.txt+' ('+c.by+')').join(' | ')]);
+        (rec.comments||[]).map(c=>c.txt+' ('+c.by+')').join(' | ')]);
     };
     const tipoTxt = tipo&&tipo!=='todos' ? ' · Tipo: '+tipo : '';
     const paisF=document.getElementById('fPais'); const paisTxt = (paisF&&paisF.value)? ' · País: '+paisF.value : '';
     if(fecha){
       const d=new Date(fecha+'T00:00:00'), mon=mondayOfDate(d), idx=(d.getDay()+6)%7, data=await ensureWeek(mon);
-      regEmployees().filter(e=>tipo==='todos'||data[e.id][idx][tipo]).forEach(e=>push(e,data[e.id][idx],d,idx));
+      const cov=await coberturaSemana(mon);
+      regEmployees().forEach(e=>{
+        const rec=data[e.id][idx]; const marca=cov[e.id] && cov[e.id][fecha];
+        if(tipo!=='todos' && !marca && !rec[tipo]) return;       // filtro por tipo (vacaciones/ausencia siempre se incluyen)
+        if(!marca && rec.status==='pendiente') return;           // sin registro y sin cobertura → no aparece
+        push(e,rec,d,idx,marca);
+      });
       subtitulo='Fecha: '+fecha+tipoTxt+paisTxt+' · '+genMsg;
       fname='registros_'+fecha+'.xlsx';
     } else {
       const mon=mondayOf(curWeek), sun=new Date(mon); sun.setDate(mon.getDate()+6);
       const data=await ensureWeek(mon);
-      regEmployees().forEach(e=>data[e.id].forEach((rec,i)=>{ if(rec.status==='pendiente')return; const day=new Date(mon); day.setDate(mon.getDate()+i); push(e,rec,day,i); }));
+      const cov=await coberturaSemana(mon);
+      regEmployees().forEach(e=>data[e.id].forEach((rec,i)=>{
+        const day=new Date(mon); day.setDate(mon.getDate()+i); const ds=ymd(day);
+        const marca=cov[e.id] && cov[e.id][ds];
+        if(!marca && rec.status==='pendiente') return;           // incluye vacaciones/permiso/incapacidad aunque no haya registro
+        push(e,rec,day,i,marca);
+      }));
       subtitulo='Semana del '+ymd(mon)+' al '+ymd(sun)+tipoTxt+paisTxt+' · '+genMsg;
       fname='registros_semana_'+ymd(mon)+'.xlsx';
     }
@@ -3397,8 +3449,8 @@ async function descargarLibro(sheet, titulo, subtitulo, rows, colMeta, fname, gr
 // El propio técnico exporta su jornada del día
 async function exportTecnicoMiDia(){
   if(typeof ExcelJS==='undefined'){ alert('No se pudo cargar la librería de Excel (revisa tu conexión).'); return; }
-  // en grupo: el Excel se habilita únicamente cuando el día está APROBADO por el supervisor
-  if(miGrupo && !(aprobHoy && aprobHoy.estado==='aprobado')){
+  // el Excel se habilita únicamente cuando el día está APROBADO por el supervisor
+  if(!(aprobHoy && aprobHoy.estado==='aprobado')){
     alert('El Excel se habilita cuando el supervisor aprueba el registro del día.'); return;
   }
   const fuente = (miRolGrupo==='miembro')? etapasGrupo : etapas;
