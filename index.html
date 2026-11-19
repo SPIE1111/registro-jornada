@@ -478,6 +478,7 @@
       <div id="paneInc" style="display:none">
         <div class="filters" style="align-items:flex-end">
           <div><label class="fl-lbl" style="display:block;margin-bottom:4px">Empleado</label>
+            <input type="text" placeholder="Buscar…" oninput="filtrarSelect(this,'incEmp')" style="display:block;margin-bottom:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:10px;min-width:220px;font-size:13px;color:var(--blue);background:var(--paper)">
             <select id="incEmp" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:10px;min-width:220px"></select></div>
           <div><label class="fl-lbl" style="display:block;margin-bottom:4px">Fecha</label>
             <input type="date" id="incFecha" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:10px"></div>
@@ -531,6 +532,7 @@
       <div id="paneAus" style="display:none">
         <div class="filters" id="ausForm" style="align-items:flex-end">
           <div><label class="fl-lbl" style="display:block;margin-bottom:4px">Empleado</label>
+            <input type="text" placeholder="Buscar…" oninput="filtrarSelect(this,'ausEmp')" style="display:block;margin-bottom:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:10px;min-width:220px;font-size:13px;color:var(--blue);background:var(--paper)">
             <select id="ausEmp" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:10px;min-width:220px"></select></div>
           <div><label class="fl-lbl" style="display:block;margin-bottom:4px">Del</label>
             <input type="date" id="ausIni" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:10px"></div>
@@ -560,6 +562,7 @@
       <div id="paneVac" style="display:none">
         <div class="filters" id="vacForm" style="align-items:flex-end">
           <div><label class="fl-lbl" style="display:block;margin-bottom:4px">Empleado</label>
+            <input type="text" placeholder="Buscar…" oninput="filtrarSelect(this,'vacEmp')" style="display:block;margin-bottom:4px;padding:8px 10px;border:1.5px solid var(--line);border-radius:10px;min-width:220px;font-size:13px;color:var(--blue);background:var(--paper)">
             <select id="vacEmp" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:10px;min-width:220px"></select></div>
           <div><label class="fl-lbl" style="display:block;margin-bottom:4px">Del</label>
             <input type="date" id="vacIni" style="padding:9px 12px;border:1.5px solid var(--line);border-radius:10px"></div>
@@ -681,7 +684,13 @@
     <div class="modal form">
       <div class="mh" style="color:var(--blue)">Programar día laborable</div>
       <p style="font-size:13px;color:var(--gray);margin:0 0 10px">Autoriza por adelantado que una persona de tu equipo laborará un sábado, domingo o día festivo. Ese día quedará autorizado para contar.</p>
-      <div style="margin-bottom:12px"><label>Empleado</label><select id="pdEmp"></select></div>
+      <div style="margin-bottom:12px"><label>Empleados (puedes elegir varios)</label>
+        <input id="pdBuscar" type="text" placeholder="Buscar por nombre o nómina…" oninput="filtrarPdEmp()" style="width:100%;margin-bottom:8px;padding:9px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;color:var(--blue);background:var(--paper)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <label style="display:flex;align-items:center;gap:6px;font-weight:600;margin:0;cursor:pointer"><input type="checkbox" id="pdTodos" onchange="pdSelTodos(this.checked)" style="width:15px;height:15px"> Seleccionar todos</label>
+          <span id="pdContador" class="muted-note" style="margin:0"></span>
+        </div>
+        <div id="pdEmpList" style="max-height:200px;overflow:auto;border:1.5px solid var(--line);border-radius:10px;padding:8px;background:var(--paper)"></div></div>
       <div style="margin-bottom:12px"><label>Fecha</label><input type="date" id="pdFecha"></div>
       <div style="margin-bottom:12px"><label>Nota (opcional)</label><input type="text" id="pdNota" placeholder="Motivo / proyecto"></div>
       <div style="display:flex;gap:10px;margin-top:4px">
@@ -783,7 +792,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Si el usuario llegó desde el enlace del correo (?reset=token), muestra el formulario de nueva contraseña
   try{ mostrarResetDesdeURL(); }catch(e){ console.warn(e); }
 });
-const APP_VERSION='v11 · 17-nov-2026 (Vacaciones/permiso/incapacidad = 8 h · Excel incluye esos días · buscador de registrador · Excel técnico estricto por aprobación)';
+const APP_VERSION='v12 · 19-nov-2026 (Buscador en desplegables de empleado · Programar día laborable para varios a la vez)';
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
 function hoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -3121,6 +3130,14 @@ function fillEmpSelect(id){
   el.innerHTML = EMP.filter(e=>e.activo).sort((a,b)=>a.nombre.localeCompare(b.nombre))
     .map(e=>`<option value="${e.id}">${e.nombre} · ${e.nomina}</option>`).join('');
 }
+// buscador para una lista desplegable (<select>): oculta las opciones que no coinciden
+function filtrarSelect(input, selId){
+  const q=norm((input&&input.value)||''); const sel=document.getElementById(selId); if(!sel) return;
+  [...sel.options].forEach(o=>{ o.hidden = !!q && !norm(o.textContent).includes(q); });
+  if(sel.selectedOptions[0] && sel.selectedOptions[0].hidden){
+    const first=[...sel.options].find(o=>!o.hidden); if(first) sel.value=first.value;
+  }
+}
 const TIPO_AUS={falta_justificada:'Falta justificada',falta_injustificada:'Falta injustificada',suspension:'Suspensión',permiso_justificado:'Permiso justificado',permiso_injustificado:'Permiso injustificado',incapacidad:'Incapacidad',abandono:'Abandono de trabajo',disciplinaria:'Medida disciplinaria',ausencia:'Ausencia',permiso:'Permiso',festivo:'Festivo',otro:'Otro'};
 function fFecha(s){ if(!s) return ''; const d=new Date(s+'T00:00:00'); return d.toLocaleDateString('es-MX',{day:'2-digit',month:'short',year:'numeric'}); }
 
@@ -3259,22 +3276,42 @@ async function rechazarSol(id){
 }
 /* Programar un día laborable (fin de semana / festivo) para alguien de tu personal */
 function abrirProgramarDia(){
-  const emps=visibleEmps().filter(e=>e.activo);
+  const emps=visibleEmps().filter(e=>e.activo).sort((a,b)=>a.nombre.localeCompare(b.nombre));
   if(!emps.length){ alert('No tienes personal asignado.'); return; }
-  const opts=emps.map(e=>`<option value="${e.id}">${e.nombre} · ${e.nomina}</option>`).join('');
-  document.getElementById('pdEmp').innerHTML=opts;
+  document.getElementById('pdEmpList').innerHTML = emps.map(e=>
+    `<label style="display:flex;align-items:center;gap:8px;font-weight:500;padding:4px 2px;margin:0"><input type="checkbox" class="pdEmp" value="${e.id}" onchange="pdContar()" style="width:16px;height:16px"> ${e.nombre} · ${e.nomina}</label>`).join('');
+  document.getElementById('pdBuscar').value='';
+  const t=document.getElementById('pdTodos'); if(t) t.checked=false;
   document.getElementById('pdFecha').value=hoyISO();
+  document.getElementById('pdNota').value='';
+  pdContar();
   document.getElementById('ovProgDia').classList.remove('hidden');
 }
+function filtrarPdEmp(){
+  const q=norm((document.getElementById('pdBuscar')||{}).value||'');
+  document.querySelectorAll('#pdEmpList label').forEach(l=>{ l.style.display=(!q||norm(l.textContent).includes(q))?'flex':'none'; });
+}
+function pdSelTodos(on){
+  // solo marca/desmarca los visibles (respeta el filtro de búsqueda)
+  document.querySelectorAll('#pdEmpList label').forEach(l=>{ if(l.style.display!=='none'){ const c=l.querySelector('.pdEmp'); if(c) c.checked=on; } });
+  pdContar();
+}
+function pdContar(){
+  const n=document.querySelectorAll('#pdEmpList .pdEmp:checked').length;
+  const c=document.getElementById('pdContador'); if(c) c.textContent=n?(n+' seleccionado'+(n>1?'s':'')):'';
+}
 async function guardarProgramarDia(){
-  const empId=document.getElementById('pdEmp').value;
+  const ids=[...document.querySelectorAll('#pdEmpList .pdEmp:checked')].map(c=>c.value);
   const fecha=document.getElementById('pdFecha').value;
   const nota=document.getElementById('pdNota').value.trim();
-  if(!empId||!fecha){ alert('Empleado y fecha son obligatorios.'); return; }
-  await DB.programarDiaLaborable(empId, fecha, nota);
-  enviarPush(empId, 'Tu supervisor programó que laborarás el '+fFecha(fecha)+'.');
+  if(!ids.length){ alert('Selecciona al menos un empleado.'); return; }
+  if(!fecha){ alert('La fecha es obligatoria.'); return; }
+  for(const empId of ids){
+    await DB.programarDiaLaborable(empId, fecha, nota);
+    enviarPush(empId, 'Tu supervisor programó que laborarás el '+fFecha(fecha)+'.');
+  }
   closeModal('ovProgDia'); adminStore={};
-  alert('Día laborable programado y autorizado para '+fFecha(fecha)+'.');
+  alert('Día laborable programado y autorizado para '+ids.length+' empleado'+(ids.length>1?'s':'')+' el '+fFecha(fecha)+'.');
 }
 
 /* ================= INCIDENCIAS (supervisor) ================= */
