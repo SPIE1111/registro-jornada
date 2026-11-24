@@ -408,6 +408,7 @@
         <h1 id="admTitle">Panel de registros</h1>
         <div class="nav" id="admSubNav" style="margin-left:6px">
           <button id="subReg" class="on" onclick="admSub('reg')">Registros</button>
+          <button id="subRep" onclick="admSub('rep')">Reporte</button>
           <button id="subSol" onclick="admSub('sol')">Solicitudes<span id="badgeSol" class="pend-badge"></span></button>
           <button id="subInc" onclick="admSub('inc')" style="display:none">Incidencias</button>
           <button id="subEmp" onclick="admSub('emp')">Empleados</button>
@@ -453,6 +454,29 @@
           <span>💬 Con comentario</span>
           <span>⏱ Tiempo extra</span>
           <span>⚑ Requiere autorización</span>
+        </div>
+      </div>
+
+      <!-- ---- SUB-VISTA: REPORTE (horas y tiempo extra) ---- -->
+      <div id="paneRep" style="display:none">
+        <div class="filters" style="align-items:center">
+          <div class="wk-nav" id="repNav">
+            <button onclick="changeWeek(-1)">‹</button>
+            <span class="lbl" id="repLbl"></span>
+            <button onclick="changeWeek(1)">›</button>
+          </div>
+          <div style="margin-left:auto">
+            <button class="btn green" style="padding:9px 14px" onclick="exportExcel()">⬇ Exportar a Excel</button>
+          </div>
+        </div>
+        <p class="muted-note" style="margin:0 0 10px">Horas base (sin tiempo extra), tiempo extra aprobado y total por día. Vacaciones, permiso e incapacidad cuentan 8 h; la falta no cuenta. Navega entre semanas con ‹ ›.</p>
+        <div class="tbl-wrap"><table class="reg" id="repTbl"></table></div>
+        <div class="lgd">
+          <span>Número = horas base del día</span>
+          <span>⏱ = tiempo extra aprobado</span>
+          <span>⏳ = tiempo extra pendiente</span>
+          <span><span class="chip blue" style="margin:0;padding:2px 7px;font-size:10px">Vac/Perm/Incap</span> = 8 h acreditadas</span>
+          <span><span class="chip red" style="margin:0;padding:2px 7px;font-size:10px">Falta</span> = 0 h</span>
         </div>
       </div>
 
@@ -788,7 +812,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Intenta restaurar la sesión si sigue vigente (refrescar no cierra sesión dentro de los 15 min)
   try{ intentarRestaurarSesion(); }catch(e){ console.warn('restaurar sesión', e); }
 });
-const APP_VERSION='v15 · 24-nov-2026 (Solicitud de salida anticipada registra la salida y cierra el día · cierre nocturno respeta la salida anticipada)';
+const APP_VERSION='v16 · 24-nov-2026 (Reporte de horas/tiempo extra dentro del panel, por semana, con datos reales)';
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
 function hoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -2633,13 +2657,14 @@ function showView(v){
 }
 function admSub(which){
   admView=which;
-  const panes={reg:'paneReg',sol:'paneSol',inc:'paneInc',emp:'paneEmp',fest:'paneFest',aus:'paneAus',vac:'paneVac',grp:'paneGrp'};
-  const subs ={reg:'subReg',sol:'subSol',inc:'subInc',emp:'subEmp',fest:'subFest',aus:'subAus',vac:'subVac',grp:'subGrp'};
-  const titulos={reg:'Panel de registros',sol:'Solicitudes',inc:'Incidencias',emp:'Empleados',fest:'Festivos',aus:'Incidencias',vac:'Vacaciones',grp:'Grupos de técnicos'};
+  const panes={reg:'paneReg',rep:'paneRep',sol:'paneSol',inc:'paneInc',emp:'paneEmp',fest:'paneFest',aus:'paneAus',vac:'paneVac',grp:'paneGrp'};
+  const subs ={reg:'subReg',rep:'subRep',sol:'subSol',inc:'subInc',emp:'subEmp',fest:'subFest',aus:'subAus',vac:'subVac',grp:'subGrp'};
+  const titulos={reg:'Panel de registros',rep:'Reporte de horas',sol:'Solicitudes',inc:'Incidencias',emp:'Empleados',fest:'Festivos',aus:'Incidencias',vac:'Vacaciones',grp:'Grupos de técnicos'};
   Object.entries(panes).forEach(([k,id])=>{ const el=document.getElementById(id); if(el) el.style.display = (k===which)?'block':'none'; });
   Object.entries(subs ).forEach(([k,id])=>{ const el=document.getElementById(id); if(el) el.classList.toggle('on',k===which); });
   document.getElementById('admTitle').textContent = titulos[which]||'Panel';
   if(which==='reg') renderReg();
+  else if(which==='rep') renderReporte();
   else if(which==='sol') renderSol();
   else if(which==='inc') renderInc();
   else if(which==='emp') renderEmp();
@@ -2848,7 +2873,54 @@ function genWeekDemo(mon){
   if(data['e4'] && data['e4'][1]) data['e4'][1].comments.push({txt:'Atraso por transporte, justificado.',by:'Supervisor',at:'09:15'});
   return data;
 }
-function changeWeek(d){ curWeek+=d; renderReg(); }
+function changeWeek(d){ curWeek+=d; if(admView==='rep') renderReporte(); else renderReg(); }
+async function renderReporte(){
+  const mon=mondayOf(curWeek); const sun=new Date(mon); sun.setDate(mon.getDate()+6);
+  const lbl=document.getElementById('repLbl');
+  if(lbl) lbl.textContent='Semana del '+mon.getDate()+' '+mon.toLocaleDateString('es-MX',{month:'short'})+' al '+sun.getDate()+' '+sun.toLocaleDateString('es-MX',{month:'short',year:'numeric'});
+  const data=await ensureWeek(mon);
+  const cov=await coberturaSemana(mon);
+  const emps=regEmployees();
+  let head='<thead><tr><th class="name left">Empleado</th>';
+  for(let i=0;i<7;i++){ const d=new Date(mon); d.setDate(mon.getDate()+i); head+='<th>'+DIAS[i]+'<br><span style="font-weight:600">'+d.getDate()+'</span></th>'; }
+  head+='<th>Base</th><th>Extra</th><th>Total</th></tr></thead>';
+  let body='<tbody>';
+  if(!emps.length){ body+='<tr><td class="name">—</td><td colspan="10" style="color:var(--gray)">Sin empleados para los filtros.</td></tr>'; document.getElementById('repTbl').innerHTML=head+body+'</tbody>'; return; }
+  const lblCorto=(marca)=>{ if(marca.tipo==='vacaciones') return 'Vac'; if(marca.sub==='incapacidad') return 'Incap'; if(String(marca.sub||'').startsWith('permiso')||marca.sub==='permiso') return 'Perm'; if(String(marca.sub||'').startsWith('falta')) return 'Falta'; return (marca.label||'Aus').slice(0,6); };
+  let gBase=0,gExtra=0;
+  emps.forEach(e=>{
+    body+='<tr><td class="name left">'+e.nombre+'<br><span style="font-size:11px;color:var(--gray)">Nómina '+e.nomina+'</span></td>';
+    let base=0, extra=0;
+    (data[e.id]||[]).forEach((rec,i)=>{
+      const d=new Date(mon); d.setDate(mon.getDate()+i); const ds=ymd(d);
+      const marca=cov[e.id] && cov[e.id][ds];
+      let cell='<span style="opacity:.35">—</span>';
+      if(marca){
+        const acred=esDiaAcreditado(rec,marca);
+        cell='<span class="chip '+(acred?'blue':'red')+'" style="margin:0;font-size:10px;padding:3px 7px">'+lblCorto(marca)+'</span>'+(acred?'<br><small>8.0</small>':'');
+        if(acred) base+=HORAS_AUSENCIA;
+      } else if(rec.status && rec.status!=='pendiente'){
+        const hr=horasReales(rec, marca); const ex=extraContado(rec);
+        if(hr!=null){
+          const ind = ex>0 ? ' <span class="cmt" title="Tiempo extra aprobado: '+ex.toFixed(2)+' h">⏱'+ex.toFixed(1)+'</span>'
+                    : (rec.otMin>0 ? ' <span class="cmt" title="Tiempo extra pendiente de aprobación">⏳</span>' : '');
+          cell='<b>'+hr.toFixed(1)+'</b>'+ind;
+          base+=hr; extra+=ex;
+        }
+      }
+      body+='<td style="text-align:center">'+cell+'</td>';
+    });
+    const total=base+extra; gBase+=base; gExtra+=extra;
+    body+='<td style="text-align:center"><b>'+base.toFixed(1)+'</b></td>'+
+          '<td style="text-align:center">'+(extra>0?extra.toFixed(1):'<span style="opacity:.35">—</span>')+'</td>'+
+          '<td style="text-align:center"><b>'+total.toFixed(1)+'</b></td></tr>';
+  });
+  body+='<tr style="border-top:2px solid var(--line)"><td class="name left" style="font-weight:700">TOTAL</td><td colspan="7"></td>'+
+        '<td style="text-align:center;font-weight:700">'+gBase.toFixed(1)+'</td>'+
+        '<td style="text-align:center;font-weight:700">'+(gExtra>0?gExtra.toFixed(1):'—')+'</td>'+
+        '<td style="text-align:center;font-weight:700">'+(gBase+gExtra).toFixed(1)+'</td></tr>';
+  document.getElementById('repTbl').innerHTML=head+body+'</tbody>';
+}
 function clearFilters(){
   document.getElementById('fPais').value=''; document.getElementById('fBuscar').value='';
   document.getElementById('fTipo').value='todos'; document.getElementById('fFecha').value='';
