@@ -359,7 +359,7 @@
           <div id="misSolList" style="margin-top:12px"></div>
         </div>
         <div class="card" style="margin-top:16px">
-          <h2>Horas laboradas · semana (<span id="metaHdr">48</span> h)</h2>
+          <h2>Horas registradas · semana (<span id="metaHdr">48</span> h)</h2>
           <div class="meter-num"><span id="accHoras">0.0</span><small> / <span id="metaSmall">48</span> h</small></div>
           <div class="track"><div class="fill" id="accFill" style="width:0%"></div></div>
           <div class="lg"><span>Acumulado semana (L–V)</span><b id="accPrev">0.0 h</b></div>
@@ -788,7 +788,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Intenta restaurar la sesión si sigue vigente (refrescar no cierra sesión dentro de los 15 min)
   try{ intentarRestaurarSesion(); }catch(e){ console.warn('restaurar sesión', e); }
 });
-const APP_VERSION='v17 · 24-nov-2026 (Se quita la pestaña Reporte; la semana completa se ve en Registros)';
+const APP_VERSION='v18 · 24-nov-2026 (Jornada por pais · aprobar minutos de tiempo extra con comentario · no aprobar propias · Horas registradas · sin leyenda en riesgo)';
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
 function hoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -1122,7 +1122,7 @@ const DB = {
     // Optimización: si son pocos empleados (un empleado o el equipo de un supervisor),
     // filtramos por id para no traer toda la empresa. RH (muchos) carga todo.
     const filtra = ids.length>0 && ids.length<=60;
-    const selFull='id,empleado_id,fecha,estado,es_vacaciones,tiempo_extra_min,tiempo_extra_estado,tiempo_extra_comentario,requiere_autorizacion,autorizacion_estado,autorizacion_comentario,checks(tipo_check,hora_evento,fuente),comentarios_seguimiento(texto,created_at,empleados:autor_id(nombre_completo))';
+    const selFull='id,empleado_id,fecha,estado,es_vacaciones,tiempo_extra_min,tiempo_extra_aprobado_min,tiempo_extra_estado,tiempo_extra_comentario,requiere_autorizacion,autorizacion_estado,autorizacion_comentario,checks(tipo_check,hora_evento,fuente),comentarios_seguimiento(texto,created_at,empleados:autor_id(nombre_completo))';
     const selBase='id,empleado_id,fecha,estado,es_vacaciones,tiempo_extra_min,checks(tipo_check,hora_evento),comentarios_seguimiento(texto,created_at,empleados:autor_id(nombre_completo))';
     let q1=sb.from('jornadas').select(selFull).gte('fecha', monISO).lte('fecha', sunISO); if(filtra) q1=q1.in('empleado_id',ids);
     let { data:js, error } = await q1;
@@ -1141,6 +1141,7 @@ const DB = {
       (j.checks||[]).forEach(c=>{ const k={inicio_jornada:'entrada',inicio_comida:'iniComida',fin_comida:'finComida',fin_jornada:'salida'}[c.tipo_check]; if(k){ rec[k]=hhmm(c.hora_evento); rec.fuente[k]=c.fuente||'usuario'; } });
       rec.comments=(j.comentarios_seguimiento||[]).map(c=>({txt:c.texto, by:(c.empleados&&c.empleados.nombre_completo)||'Supervisor', at:hhmm(c.created_at)}));
       rec.otMin = j.tiempo_extra_min||0;
+      rec.otAprobadoMin = (j.tiempo_extra_aprobado_min!=null)? j.tiempo_extra_aprobado_min : null;
       rec.otEstado = j.tiempo_extra_estado||null;
       rec.otComentario = j.tiempo_extra_comentario||'';
       rec.reqAut = !!j.requiere_autorizacion;
@@ -1169,14 +1170,20 @@ const DB = {
     const { error } = await sb.from('comentarios_seguimiento').insert({ jornada_id:jId, autor_id:U.id, texto });
     if(error) console.warn('addComentario', error);
   },
-  async validarTiempoExtra(jId, aprobado, comentario){
+  async validarTiempoExtra(jId, aprobado, comentario, minAprob){
     if(!SB_LIVE || !jId) return;
-    const { error } = await sb.from('jornadas').update({
+    const full={
       tiempo_extra_estado: aprobado?'aprobado':'rechazado',
       tiempo_extra_comentario: comentario||null,
+      tiempo_extra_aprobado_min: aprobado?(minAprob||0):0,
       tiempo_extra_aprobado_por: U?U.id:null,
       tiempo_extra_aprobado_en: new Date().toISOString()
-    }).eq('id', jId);
+    };
+    let { error } = await sb.from('jornadas').update(full).eq('id', jId);
+    if(error){  // la columna tiempo_extra_aprobado_min quizá aún no existe → reintenta sin ella
+      const {tiempo_extra_aprobado_min, ...base}=full;
+      const r2=await sb.from('jornadas').update(base).eq('id', jId); error=r2.error;
+    }
     if(error) console.warn('validarTiempoExtra', error);
   },
   async upsertEmpleado(obj, id){
@@ -1602,6 +1609,7 @@ async function entrarApp(rec){
   U.es_rh = U.es_rh || esRHNomina(U.numero_nomina||U.nomina);   // RH reconocido por nómina
   if(U.es_rh) U.supervisor = true;                               // RH también tiene acceso al panel
   es_campo = rec.clas==='operativo';
+  recalcularMeta();                                              // jornada semanal según el país
   document.getElementById('login').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
   // estado del día: fin de semana, festivo (por país) y ausencia (por empleado)
@@ -2147,7 +2155,7 @@ function renderResumen(){
       <p style="margin-top:6px;font-size:15px;color:var(--blue)">Entrada <b>${checks.inicio_jornada?fmt(checks.inicio_jornada.min):'—'}</b> &nbsp;·&nbsp; Salida <b>${checks.fin_jornada?fmt(checks.fin_jornada.min):'—'}</b></p></div>
     ${orderedHistory()}
     <div class="card" style="margin-top:16px;background:var(--paper)">
-      <h2>Horas laboradas del día${otEstadoHoy==='aprobado'?' (incluye tiempo extra aprobado)':''}</h2>
+      <h2>Horas registradas del día${otEstadoHoy==='aprobado'?' (incluye tiempo extra aprobado)':''}</h2>
       <div class="meter-num"><span>${today.toFixed(1)}</span><small> h hoy</small></div>
       <div class="lg"><span>Acumulado semanal</span><b>${tot.toFixed(1)} / ${META} h</b></div>
       <div class="track"><div class="fill" style="width:${pct}%"></div></div>
@@ -2411,11 +2419,19 @@ function resolvePending(){
 
 /* ================= ACUMULADO ================= */
 // Meta semanal por año: baja 2 h/año desde 48 (2026) hasta 40 (2030+).
-function metaHorasSemana(anio){
+// Jornada semanal según el país (y el año, donde aplica reducción).
+function metaHorasSemana(pais, anio){
+  anio = anio || new Date().getFullYear();
+  const p = String(pais||'').toLowerCase();
+  if(/chile/.test(p))                         return anio>=2028 ? 40 : 42;   // Chile: 42 h, baja a 40 en 2028
+  if(/dominic/.test(p))                       return 44;                      // República Dominicana: 44 h
+  if(/uruguay/.test(p))                       return 48;                      // Uruguay: 48 h (sin reducción)
+  // México (y el resto): se mantiene el esquema asignado por año
   const cfg={2026:48,2027:46,2028:44,2029:42,2030:40};
   return cfg[anio] ?? Math.min(48, Math.max(40, 48 - 2*Math.max(0, anio-2026)));
 }
-const META = metaHorasSemana(new Date().getFullYear());
+let META = metaHorasSemana('', new Date().getFullYear());
+function recalcularMeta(){ META = metaHorasSemana(U?U.pais:'', new Date().getFullYear()); }
 /* Acumulado de la semana (lunes a viernes) de los días previos a hoy, + días adicionales autorizados.
    El día de hoy lo suma accValues() en tiempo real. */
 async function cargarAcumuladoPrevio(){
@@ -2480,8 +2496,7 @@ function updateAcc(){
   const f=document.getElementById('accFill'); f.style.width=pct+'%';
   const chip=document.getElementById('accChip');
   if(tot>=META){ f.style.background='var(--green)'; chip.innerHTML='<span class="chip green">● '+META+' h cumplidas</span>'; }
-  else if(tot>=META-4){ f.style.background='var(--blue)'; chip.innerHTML='<span class="chip blue">● En curso — faltan '+(META-tot).toFixed(1)+' h</span>'; }
-  else { f.style.background='var(--amber)'; chip.innerHTML='<span class="chip amber">● En riesgo — faltan '+(META-tot).toFixed(1)+' h</span>'; }
+  else { f.style.background='var(--blue)'; chip.innerHTML='<span class="chip blue">● En curso</span>'; }
 }
 
 /* ================= RECORDATORIOS ================= */
@@ -2613,7 +2628,7 @@ function _setBadge(id,n){ const b=document.getElementById(id); if(!b)return; if(
 async function actualizarPendientes(){
   if(!(U && (U.supervisor || U.es_rh))) return;
   let p={sol:0,ot:0,aut:0,total:0};
-  try{ const ids=visibleEmps().map(e=>e.id); p=await DB.contarPendientes(ids); }catch(e){ console.warn(e); }
+  try{ const ids=visibleEmps().map(e=>e.id).filter(id=>id!==U.id); p=await DB.contarPendientes(ids); }catch(e){ console.warn(e); }
   _setBadge('badgeNav', p.total);
   _setBadge('badgeSol', p.sol + p.ot + p.aut);   // Solicitudes incluye los días trabajados por aprobar
 }
@@ -2801,10 +2816,11 @@ function horasReales(rec, marca){
   if(ic!=null&&fc!=null&&fc>ic) min-=(fc-ic);
   return Math.max(0,min)/60;
 }
-// Tiempo extra que SÍ cuenta (horas): aprobado por el supervisor, o asignado (día autorizado).
+// Tiempo extra que SÍ cuenta (horas): los minutos que el supervisor APROBÓ (puede ser menos que lo solicitado).
 function extraContado(rec){
-  if(!(rec.otMin>0)) return 0;
-  return (rec.otEstado==='aprobado') ? rec.otMin/60 : 0;
+  if(rec.otEstado!=='aprobado') return 0;
+  const ap = (rec.otAprobadoMin!=null ? rec.otAprobadoMin : rec.otMin);
+  return (ap||0)/60;
 }
 // LIVE: carga la semana desde Supabase; DEMO: la genera. Cachea en adminStore.
 async function ensureWeek(mon){
@@ -2975,6 +2991,7 @@ async function renderRegDay(fecha){
 /* ---- detalle de día ---- */
 function openDet(empId,weekKey,dayIdx){
   detCtx={weekKey,empId,dayIdx};
+  const puedeValidar = !!(U && U.supervisor && empId!==U.id);   // nadie aprueba sus propios registros
   const mon=new Date(weekKey+'T00:00:00'); const day=new Date(mon); day.setDate(mon.getDate()+dayIdx);
   const rec=adminStore[weekKey][empId][dayIdx];
   const emp=EMP.find(x=>x.id===empId);
@@ -2994,12 +3011,22 @@ function openDet(empId,weekKey,dayIdx){
     const est=rec.otEstado||'pendiente';
     const estLbl={pendiente:'Pendiente de aprobación',aprobado:'Aprobado',rechazado:'Rechazado'}[est]||est;
     const estCls={pendiente:'amber',aprobado:'green',rechazado:'red'}[est]||'amber';
-    h+='<div class="det-row" style="margin-top:10px;border-top:1px solid var(--line);padding-top:12px"><span>⏱ Tiempo extra</span><span class="tm">'+rec.otMin+' min</span></div>';
+    h+='<div class="det-row" style="margin-top:10px;border-top:1px solid var(--line);padding-top:12px"><span>⏱ Tiempo extra solicitado</span><span class="tm">'+rec.otMin+' min ('+(rec.otMin/60).toFixed(2)+' h)</span></div>';
     h+='<div class="det-row"><span>Estado</span><span><span class="chip '+estCls+'">'+estLbl+'</span></span></div>';
+    if(rec.otEstado==='aprobado'){
+      const ap=(rec.otAprobadoMin!=null?rec.otAprobadoMin:rec.otMin);
+      h+='<div class="det-row"><span>Tiempo extra <b>aprobado</b></span><span class="tm">'+ap+' min ('+(ap/60).toFixed(2)+' h)</span></div>';
+    }
     if(rec.otComentario) h+='<div class="det-row"><span>Comentario</span><span style="text-align:right;max-width:60%">'+rec.otComentario+'</span></div>';
-    if(U && U.supervisor){
-      h+='<div style="margin-top:10px"><input type="text" id="otCmt" placeholder="Comentario de validación (opcional)" value="'+(rec.otComentario||'').replace(/"/g,'&quot;')+'" style="width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;margin-bottom:8px;color:var(--blue);background:var(--paper)">';
-      h+='<div style="display:flex;gap:8px"><button class="btn green" style="flex:1" onclick="validarOt(true)">Aprobar tiempo extra</button><button class="btn red" style="flex:1" onclick="validarOt(false)">Rechazar</button></div></div>';
+    if(puedeValidar){
+      const defMin=(rec.otAprobadoMin!=null?rec.otAprobadoMin:rec.otMin);
+      h+='<div style="margin-top:10px">'+
+        '<label style="display:block;font-size:12px;font-weight:600;color:var(--blue);margin-bottom:4px">Minutos a aprobar (puedes ajustar cuántos autorizas)</label>'+
+        '<input type="number" id="otMinAprob" min="0" max="'+rec.otMin+'" value="'+defMin+'" style="width:130px;padding:9px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;margin-bottom:8px;color:var(--blue);background:var(--paper)">'+
+        '<input type="text" id="otCmt" placeholder="Comentario de la acción (obligatorio)" value="'+(rec.otComentario||'').replace(/"/g,'&quot;')+'" style="width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;margin-bottom:8px;color:var(--blue);background:var(--paper)">'+
+        '<div style="display:flex;gap:8px"><button class="btn green" style="flex:1" onclick="validarOt(true)">Aprobar</button><button class="btn red" style="flex:1" onclick="validarOt(false)">Rechazar</button></div></div>';
+    } else if(U && U.supervisor && detCtx.empId===U.id){
+      h+='<div class="muted-note" style="margin-top:8px;color:var(--gray)">No puedes aprobar tu propio tiempo extra; lo revisa tu supervisor.</div>';
     }
   }
   if(rec.reqAut){
@@ -3011,7 +3038,9 @@ function openDet(empId,weekKey,dayIdx){
     h+='<div class="det-row" style="margin-top:10px;border-top:1px solid var(--line);padding-top:12px"><span>📅 Fin de semana / festivo — requiere autorización</span></div>';
     h+='<div class="det-row"><span>Estado</span><span><span class="chip '+estCls+'">'+estLbl+'</span></span></div>';
     if(rec.autComentario) h+='<div class="det-row"><span>Comentario</span><span style="text-align:right;max-width:60%">'+rec.autComentario+'</span></div>';
-    if(U && U.supervisor){
+    if(U && U.supervisor && detCtx.empId===U.id){
+      h+='<div class="muted-note" style="margin-top:8px;color:var(--gray)">No puedes autorizar tu propio día; lo revisa tu supervisor.</div>';
+    } else if(puedeValidar){
       if(fueraVentana && est==='pendiente'){
         h+='<div class="muted-note" style="margin-top:8px;color:var(--red)">Fuera de la ventana de 1 semana. Ya no se puede autorizar ni modificar.</div>';
       } else if(!fueraVentana){
@@ -3035,10 +3064,17 @@ function openDet(empId,weekKey,dayIdx){
 }
 function validarOt(aprob){
   if(!detCtx) return;
+  if(detCtx.empId===U.id){ alert('No puedes aprobar tu propio tiempo extra.'); return; }
   const rec=adminStore[detCtx.weekKey][detCtx.empId][detCtx.dayIdx];
-  const cmt=(document.getElementById('otCmt')||{}).value||'';
-  rec.otEstado=aprob?'aprobado':'rechazado'; rec.otComentario=cmt;
-  DB.validarTiempoExtra(rec.jornadaId, aprob, cmt);
+  const cmt=((document.getElementById('otCmt')||{}).value||'').trim();
+  if(!cmt){ alert('Agrega el comentario de la acción (aprobación o rechazo).'); return; }
+  let minAprob = aprob ? parseInt((document.getElementById('otMinAprob')||{}).value,10) : 0;
+  if(aprob){
+    if(isNaN(minAprob) || minAprob<0){ alert('Indica cuántos minutos apruebas.'); return; }
+    if(minAprob>rec.otMin) minAprob=rec.otMin;   // no se puede aprobar más de lo solicitado
+  }
+  rec.otEstado=aprob?'aprobado':'rechazado'; rec.otComentario=cmt; rec.otAprobadoMin=aprob?minAprob:0;
+  DB.validarTiempoExtra(rec.jornadaId, aprob, cmt, rec.otAprobadoMin);
   openDet(detCtx.empId,detCtx.weekKey,detCtx.dayIdx);
   renderReg(); actualizarPendientes();
 }
@@ -3330,7 +3366,7 @@ async function eliminarVacacion(id){ await DB.deleteVacacion(id); renderVac(); }
 let solStore=[];
 async function renderDiasPorAprobar(){
   const box=document.getElementById('diasAprobarBox'); if(!box) return;
-  const ids=visibleEmps().map(e=>e.id);
+  const ids=visibleEmps().map(e=>e.id).filter(id=>id!==U.id);   // no se aprueban los propios
   let dias=[]; try{ dias=await DB.diasPorAprobar(ids); }catch(e){ console.warn(e); }
   // separa: tiempo extra (del usuario) y autorización de día (fin de semana/festivo)
   const items=[];
@@ -3344,23 +3380,33 @@ async function renderDiasPorAprobar(){
     '<div class="muted-note" style="margin:4px 0 8px">Tiempo extra solicitado por el personal y días trabajados en fin de semana o festivo.</div>';
   items.forEach((it,ix)=>{
     const d=it.d; const cid='daCmt_'+it.tipo+'_'+d.id;
+    const minInput = it.tipo==='ot'
+      ? '<div style="margin-top:6px"><label style="font-size:12px;font-weight:600;color:var(--blue)">Minutos a aprobar (puedes ajustar): </label>'+
+        '<input type="number" id="daMin_'+d.id+'" min="0" max="'+(d.otMin||0)+'" value="'+(d.otMin||0)+'" style="width:100px;padding:7px 10px;border:1.5px solid var(--line);border-radius:10px;font-size:13px;color:var(--blue);background:var(--paper)"></div>'
+      : '';
     html+='<div style="border-top:1px solid var(--line);margin-top:8px;padding-top:8px">'+
       '<div style="font-weight:600">'+d.nombre+' · Nómina '+d.nomina+'</div>'+
       '<div class="muted-note" style="margin:2px 0">'+fFecha(d.fecha)+' · '+it.etq+' — '+it.detalle+'</div>'+
+      minInput+
+      '<input type="text" id="'+cid+'" placeholder="Comentario de la acción (obligatorio)" style="width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:10px;font-size:13px;margin-top:6px;color:var(--blue);background:var(--paper)">'+
       '<div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">'+
         '<button class="btn green" style="flex:1;min-width:110px" onclick="aprobarDiaTrab(\''+it.tipo+'\',\''+d.id+'\','+ix+',true)">Aprobar</button>'+
-        '<button class="btn red" style="flex:1;min-width:110px" onclick="aprobarDiaTrab(\''+it.tipo+'\',\''+d.id+'\','+ix+',false)">Rechazar</button></div>'+
-      '<input type="text" id="'+cid+'" placeholder="Comentario (obligatorio si rechazas)" style="width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:10px;font-size:13px;margin-top:6px;color:var(--blue);background:var(--paper)"></div>';
+        '<button class="btn red" style="flex:1;min-width:110px" onclick="aprobarDiaTrab(\''+it.tipo+'\',\''+d.id+'\','+ix+',false)">Rechazar</button></div></div>';
   });
   html+='</div>';
   box.innerHTML=html;
 }
 async function aprobarDiaTrab(tipo, jornadaId, ix, aprob){
   const cid='daCmt_'+tipo+'_'+jornadaId;
-  const cmt=(document.getElementById(cid)||{}).value||'';
-  if(!aprob && !cmt.trim()){ alert('Para rechazar, agrega el comentario para que la persona lo revise.'); return; }
-  if(tipo==='ot') await DB.validarTiempoExtra(jornadaId, aprob, cmt.trim());
-  else await DB.autorizarDia(jornadaId, aprob, cmt.trim());
+  const cmt=((document.getElementById(cid)||{}).value||'').trim();
+  if(!cmt){ alert('Agrega el comentario de la acción (aprobación o rechazo).'); return; }
+  if(tipo==='ot'){
+    let minAprob = aprob ? parseInt((document.getElementById('daMin_'+jornadaId)||{}).value,10) : 0;
+    if(aprob && (isNaN(minAprob)||minAprob<0)){ alert('Indica cuántos minutos apruebas.'); return; }
+    await DB.validarTiempoExtra(jornadaId, aprob, cmt, aprob?minAprob:0);
+  } else {
+    await DB.autorizarDia(jornadaId, aprob, cmt);
+  }
   adminStore={};                 // refresca el panel/semana con el nuevo estado
   renderDiasPorAprobar(); actualizarPendientes();
 }
@@ -3369,7 +3415,7 @@ async function renderSol(){
   const ids=visibleEmps().map(e=>e.id);
   solStore = await DB.solicitudesDe(ids);
   const filtro=(document.getElementById('solFiltro')||{}).value||'pendiente';
-  const list = solStore.filter(s=>filtro==='todas'||s.estado===filtro);
+  const list = solStore.filter(s=>(filtro==='todas'||s.estado===filtro) && s.empId!==U.id);   // nadie aprueba sus propias solicitudes
   const estLbl={pendiente:'Pendiente',aprobada:'Aprobada',rechazada:'Rechazada'}, estCls={pendiente:'amber',aprobada:'green',rechazada:'red'};
   let head='<thead><tr><th class="name left">Empleado</th><th>Tipo</th><th>Fechas</th><th>Motivo</th><th>Estado</th><th>Acción</th></tr></thead>';
   let body='<tbody>';
@@ -3503,7 +3549,7 @@ async function exportExcel(){
       const fz=k=>{ if(acred) return 'Sistema'; const v=(rec.fuente||{})[k]; return v==='sistema'?'Sistema':(v?'Usuario':'—'); };
       const teMin   = rec.otMin>0 ? Math.round(rec.otMin) : 0;
       const teHoras = rec.otMin>0 ? Number((rec.otMin/60).toFixed(2)) : 0;
-      const teAut   = (rec.otMin>0 && rec.otEstado==='aprobado') ? Number((rec.otMin/60).toFixed(2)) : 0;  // tiempo extra autorizado
+      const teAut   = Number(extraContado(rec).toFixed(2));  // tiempo extra autorizado (los minutos que aprobó el supervisor)
       const totalDia = Number(((hr!=null?hr:0) + teAut).toFixed(2));
       const teRes = rec.otMin>0 ? (rec.otEstado==='aprobado'?'Autorizado (contabilizado)':rec.otEstado==='rechazado'?'Rechazado (no cuenta)':'Pendiente de autorización') : 'Sin tiempo extra';
       const salExtra = (rec.otMin>0 && rec.otEstado==='aprobado') ? rec.salida : '—';
