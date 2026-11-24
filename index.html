@@ -471,6 +471,7 @@
             <button class="btn ghost" style="padding:9px 14px" onclick="abrirProgramarDia()">＋ Programar día laborable (fin de semana / festivo)</button></div>
         </div>
         <p class="muted-note" style="margin:0 0 10px">Aprueba o rechaza las solicitudes de tu personal. Al aprobar, se ajusta el registro de la jornada (vacaciones/enfermedad se marcan en esos días; el tiempo extra se contabiliza).</p>
+        <div id="diasAprobarBox"></div>
         <div class="tbl-wrap"><table class="reg" id="solTbl"></table></div>
       </div>
 
@@ -792,7 +793,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Si el usuario llegó desde el enlace del correo (?reset=token), muestra el formulario de nueva contraseña
   try{ mostrarResetDesdeURL(); }catch(e){ console.warn(e); }
 });
-const APP_VERSION='v12 · 19-nov-2026 (Buscador en desplegables de empleado · Programar día laborable para varios a la vez)';
+const APP_VERSION='v13 · 24-nov-2026 (Descanso bloqueado sin autorización · cierre 8:30pm con autollenado · horas base vs tiempo extra · aprobaciones en Solicitudes)';
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
 function hoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -1354,6 +1355,19 @@ const DB = {
     const aut = await cuenta('jornadas','autorizacion_estado','pendiente');
     return {sol, ot, aut, total:sol+ot+aut};
   },
+  // días trabajados que esperan aprobación del supervisor: tiempo extra del usuario y trabajo en fin de semana/festivo
+  async diasPorAprobar(empIds){
+    if(!SB_LIVE || !empIds || !empIds.length) return [];
+    const { data, error } = await sb.from('jornadas')
+      .select('id,empleado_id,fecha,tiempo_extra_min,tiempo_extra_estado,autorizacion_estado,empleados:empleado_id(nombre_completo,numero_nomina)')
+      .in('empleado_id',empIds)
+      .or('tiempo_extra_estado.eq.pendiente,autorizacion_estado.eq.pendiente')
+      .order('fecha',{ascending:false});
+    if(error){ console.warn('diasPorAprobar',error); return []; }
+    return (data||[]).map(j=>({ id:j.id, empId:j.empleado_id, fecha:j.fecha,
+      nombre:j.empleados?j.empleados.nombre_completo:'—', nomina:j.empleados?j.empleados.numero_nomina:'',
+      otMin:j.tiempo_extra_min||0, otEstado:j.tiempo_extra_estado||null, autEstado:j.autorizacion_estado||null }));
+  },
   async programarDiaLaborable(empId, fecha, nota){
     if(!SB_LIVE) return;
     const base={ empleado_id:empId, fecha, es_operativo:true };
@@ -1649,8 +1663,9 @@ function startApp(){
   if(es_campo || puedePanel){ document.getElementById('nav').style.display='flex'; }
   if(puedePanel){ initAdmin(); }
   buildFlow();
-  // auto-registro de la entrada al abrir la app (si aún no se registró y es día laborable)
-  if(!esVacaciones && !esAusencia && !esIncidencia && !checks.inicio_jornada && !jornadaCerrada){
+  // auto-registro de la entrada al abrir la app (si aún no se registró y es día laborable;
+  // en día de descanso no autorizado NO se registra nada)
+  if(!esVacaciones && !esAusencia && !esIncidencia && !diaDescansoNoAutorizado() && !checks.inicio_jornada && !jornadaCerrada){
     autoRegistrarEntrada();
   }
   renderMisSolicitudes();
@@ -1804,6 +1819,9 @@ function renderMisSolicitudes(){
 }
 
 /* ================= RENDER ================= */
+// día de descanso (fin de semana / festivo) SIN autorización previa del supervisor:
+// el registro de jornada no se habilita salvo que se haya programado el día laborable.
+function diaDescansoNoAutorizado(){ return !!((esFinde || esFestivo) && autEstadoHoy!=='autorizada'); }
 function render(){
   renderStepper();
   const m=document.getElementById('main');
@@ -1838,6 +1856,16 @@ function render(){
       <span class="chip red">● Jornada bloqueada por incidencia</span></div>`;
     return;
   }
+  if(diaDescansoNoAutorizado()){
+    document.getElementById('stepCount').textContent = esFestivo?'festivo':'descanso';
+    const etq = esFestivo ? ('día festivo'+(typeof esFestivo==='string'?' ('+esFestivo+')':'')) : 'día de descanso (fin de semana)';
+    m.innerHTML = `<div class="vac"><div class="big">🛌</div>
+      <h3>Día de descanso</h3>
+      <p>${U.nombre}, hoy es <b>${etq}</b>.</p>
+      <p>El registro de jornada <b>no está habilitado</b>. Solo se habilita si tu supervisor <b>autoriza por adelantado</b> que laborarás este día.</p>
+      <span class="chip blue">● Registro no habilitado</span></div>`;
+    return;
+  }
   if(tardeMotivoPend){ renderMotivoTarde(); return; }
   if(view==='solicitud'){ renderNuevaSolicitud(); return; }
   if(view==='resumen'){ renderResumen(); return; }
@@ -1851,8 +1879,8 @@ function render(){
      <div class="step-q">${step.q}</div>`;
   if(esFestivo || esFinde){
     const etq = esFestivo ? ('día festivo'+(typeof esFestivo==='string'?' ('+esFestivo+')':'')) : 'fin de semana';
-    html += `<div class="noform" style="border-color:#f0d9a6;background:var(--amber-bg);color:var(--amber);margin-top:0;margin-bottom:16px;text-align:center">
-      Hoy es <b>${etq}</b>. Si trabajas, tus horas quedarán <b>pendientes de autorización</b> de tu supervisor o de RH para contabilizarse.</div>`;
+    html += `<div class="noform" style="border-color:#bfe0bf;background:var(--green-bg);color:var(--green);margin-top:0;margin-bottom:16px;text-align:center">
+      Hoy es <b>${etq}</b>, <b>autorizado</b> por tu supervisor. Tus horas de este día se contabilizan.</div>`;
   }
 
   if(checks[step.k]){
@@ -2223,11 +2251,12 @@ function bannerAprobacion(){
   return h;
 }
 // en vacaciones o con una incidencia/ausencia no se habilita el registro de la jornada del técnico
-function tecnicoBloqueadoPorAusencia(){ return !!(esVacaciones || esAusencia || esIncidencia); }
+function tecnicoBloqueadoPorAusencia(){ return !!(esVacaciones || esAusencia || esIncidencia || diaDescansoNoAutorizado()); }
 function motivoAusenciaTxt(){
   if(esVacaciones) return 'vacaciones';
   if(esIncidencia) return 'una incidencia';
   if(esAusencia)   return 'una ausencia / incapacidad';
+  if(diaDescansoNoAutorizado()) return (esFestivo?'día festivo':'día de descanso')+' (sin autorización del supervisor)';
   return '';
 }
 function actualizarBtnExpTec(){
@@ -2249,7 +2278,7 @@ function actualizarBtnExpTec(){
 function renderEtapas(){
   const el=document.getElementById('etapasList'); if(!el) return;
   if(tecnicoBloqueadoPorAusencia()){
-    el.innerHTML='<div class="empty">Hoy tienes '+motivoAusenciaTxt()+' registrada. No se habilita el registro de la jornada del técnico.</div>';
+    el.innerHTML='<div class="empty">No se habilita el registro de la jornada del técnico hoy ('+motivoAusenciaTxt()+').</div>';
     const ib=document.getElementById('intervalosBox'); if(ib) ib.innerHTML='';
     actualizarBtnExpTec(); return;
   }
@@ -2350,8 +2379,9 @@ async function cargarAcumuladoPrevio(){
       if(i>=hoyIdx) return;                      // hoy y futuro no entran aquí
       const dd=new Date(mon); dd.setDate(mon.getDate()+i); const marca=covU[ymd(dd)];
       const hr = horasReales(rec, marca); if(hr==null) return;
-      if(i<5) prevSemana += hr;                  // lunes a viernes = base (incluye vacaciones/permiso/incapacidad = 8 h)
-      else if(rec.autEstado==='autorizada') prevSemana += hr;  // sábado/domingo solo si se autorizó
+      const extra = extraContado(rec);           // tiempo extra aprobado (horas)
+      if(i<5) prevSemana += hr + extra;          // lunes a viernes = base + extra aprobado (vacaciones/permiso/incapacidad = 8 h)
+      else if(rec.autEstado==='autorizada') prevSemana += hr + extra;  // sábado/domingo solo si se autorizó
     });
   }catch(e){ console.warn('cargarAcumuladoPrevio', e); }
 }
@@ -2414,7 +2444,9 @@ function scheduleNotifs(){
     return;
   }
   if(esFinde || esFestivo){
-    box.innerHTML = `<div class="notif warn"><span class="ic2">⚑</span><span>Hoy es ${esFestivo?'día festivo':'fin de semana'}. Si trabajas, tus horas quedarán pendientes de autorización de tu supervisor o de RH.</span></div>`;
+    box.innerHTML = diaDescansoNoAutorizado()
+      ? `<div class="notif"><span class="ic2">🛌</span><span>Hoy es ${esFestivo?'día festivo':'día de descanso'}. El registro no está habilitado salvo que tu supervisor autorice la jornada.</span></div>`
+      : `<div class="notif"><span class="ic2">✅</span><span>Hoy es ${esFestivo?'día festivo':'fin de semana'} autorizado por tu supervisor. Tus horas se contabilizan.</span></div>`;
     return;
   }
   const items=[];
@@ -2531,7 +2563,7 @@ async function actualizarPendientes(){
   let p={sol:0,ot:0,aut:0,total:0};
   try{ const ids=visibleEmps().map(e=>e.id); p=await DB.contarPendientes(ids); }catch(e){ console.warn(e); }
   _setBadge('badgeNav', p.total);
-  _setBadge('badgeSol', p.sol);
+  _setBadge('badgeSol', p.sol + p.ot + p.aut);   // Solicitudes incluye los días trabajados por aprobar
 }
 /* Todos los del panel (RH y supervisores) ven las mismas pestañas.
    La diferencia es el contenido: RH ve/edita a todos; el supervisor solo ve (sin editar) a su personal asignado.
@@ -2702,17 +2734,25 @@ function esDiaAcreditado(rec, marca){
   }
   return false;
 }
+// Horas BASE del día (sin tiempo extra). El tiempo extra se reporta aparte.
 function horasReales(rec, marca){
   // vacaciones / permiso / incapacidad → 8 h, para no perder el conteo de horas laboradas
   if(esDiaAcreditado(rec, marca)) return HORAS_AUSENCIA;
-  // horas laboradas = salida − entrada − comida (la jornada del técnico es un registro aparte)
   const ent=hhmmToMin(rec.entrada), sal=hhmmToMin(rec.salida);
   if(ent==null||sal==null) return null;
-  let min=sal-ent;
+  // día autorizado (fin de semana/festivo programado por el supervisor) → cuenta completo;
+  // día normal → las horas base se topan a la salida fija (17:30); lo que exceda es tiempo extra.
+  const diaAutorizado = rec.reqAut && rec.autEstado==='autorizada';
+  const salBase = diaAutorizado ? sal : Math.min(sal, SALIDA_FIJA);
+  let min = salBase - ent;
   const ic=hhmmToMin(rec.iniComida), fc=hhmmToMin(rec.finComida);
   if(ic!=null&&fc!=null&&fc>ic) min-=(fc-ic);
-  if(rec.otMin>0 && rec.otEstado!=='aprobado') min-=rec.otMin;  // extra no aprobado no cuenta
   return Math.max(0,min)/60;
+}
+// Tiempo extra que SÍ cuenta (horas): aprobado por el supervisor, o asignado (día autorizado).
+function extraContado(rec){
+  if(!(rec.otMin>0)) return 0;
+  return (rec.otEstado==='aprobado') ? rec.otMin/60 : 0;
 }
 // LIVE: carga la semana desde Supabase; DEMO: la genera. Cachea en adminStore.
 async function ensureWeek(mon){
@@ -3236,7 +3276,44 @@ async function eliminarVacacion(id){ await DB.deleteVacacion(id); renderVac(); }
 
 /* ================= SOLICITUDES (supervisor) ================= */
 let solStore=[];
+async function renderDiasPorAprobar(){
+  const box=document.getElementById('diasAprobarBox'); if(!box) return;
+  const ids=visibleEmps().map(e=>e.id);
+  let dias=[]; try{ dias=await DB.diasPorAprobar(ids); }catch(e){ console.warn(e); }
+  // separa: tiempo extra (del usuario) y autorización de día (fin de semana/festivo)
+  const items=[];
+  dias.forEach(d=>{
+    if(d.otEstado==='pendiente') items.push({tipo:'ot', d, etq:'Tiempo extra', detalle:(d.otMin||0)+' min ('+((d.otMin||0)/60).toFixed(2)+' h)'});
+    if(d.autEstado==='pendiente') items.push({tipo:'aut', d, etq:'Día trabajado (fin de semana/festivo)', detalle:'Requiere autorización'});
+  });
+  if(!items.length){ box.innerHTML=''; return; }
+  let html='<div class="card" style="padding:12px;margin-bottom:12px;border:1.5px solid var(--amber)">'+
+    '<b>Días trabajados por aprobar ('+items.length+')</b>'+
+    '<div class="muted-note" style="margin:4px 0 8px">Tiempo extra solicitado por el personal y días trabajados en fin de semana o festivo.</div>';
+  items.forEach((it,ix)=>{
+    const d=it.d; const cid='daCmt_'+it.tipo+'_'+d.id;
+    html+='<div style="border-top:1px solid var(--line);margin-top:8px;padding-top:8px">'+
+      '<div style="font-weight:600">'+d.nombre+' · Nómina '+d.nomina+'</div>'+
+      '<div class="muted-note" style="margin:2px 0">'+fFecha(d.fecha)+' · '+it.etq+' — '+it.detalle+'</div>'+
+      '<div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">'+
+        '<button class="btn green" style="flex:1;min-width:110px" onclick="aprobarDiaTrab(\''+it.tipo+'\',\''+d.id+'\','+ix+',true)">Aprobar</button>'+
+        '<button class="btn red" style="flex:1;min-width:110px" onclick="aprobarDiaTrab(\''+it.tipo+'\',\''+d.id+'\','+ix+',false)">Rechazar</button></div>'+
+      '<input type="text" id="'+cid+'" placeholder="Comentario (obligatorio si rechazas)" style="width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:10px;font-size:13px;margin-top:6px;color:var(--blue);background:var(--paper)"></div>';
+  });
+  html+='</div>';
+  box.innerHTML=html;
+}
+async function aprobarDiaTrab(tipo, jornadaId, ix, aprob){
+  const cid='daCmt_'+tipo+'_'+jornadaId;
+  const cmt=(document.getElementById(cid)||{}).value||'';
+  if(!aprob && !cmt.trim()){ alert('Para rechazar, agrega el comentario para que la persona lo revise.'); return; }
+  if(tipo==='ot') await DB.validarTiempoExtra(jornadaId, aprob, cmt.trim());
+  else await DB.autorizarDia(jornadaId, aprob, cmt.trim());
+  adminStore={};                 // refresca el panel/semana con el nuevo estado
+  renderDiasPorAprobar(); actualizarPendientes();
+}
 async function renderSol(){
+  renderDiasPorAprobar();
   const ids=visibleEmps().map(e=>e.id);
   solStore = await DB.solicitudesDe(ids);
   const filtro=(document.getElementById('solFiltro')||{}).value||'pendiente';
@@ -3364,7 +3441,7 @@ async function exportExcel(){
     rows=[['Empleado','Nómina','País','Clasificación','Fecha','Día','Estado',
       'Entrada','Inicio comida','Fin comida','Salida',
       'Entrada registró','Inicio comida registró','Fin comida registró','Salida registró',
-      'Horas laboradas (reales)','Tiempo extra (min)','Tiempo extra (horas)','Resultado tiempo extra','Hora de salida con tiempo extra','Comentario tiempo extra',
+      'Horas laboradas (base)','Tiempo extra solicitado (min)','Tiempo extra solicitado (horas)','Tiempo extra autorizado (horas)','Total del día (horas)','Resultado tiempo extra','Hora de salida con tiempo extra','Comentario tiempo extra',
       'Requiere autorización','Estado autorización','Comentario autorización','Comentarios']];
     const autL={pendiente:'Pendiente',autorizada:'Autorizada',rechazada:'Rechazada'};
     const push=(e,rec,day,i,marca)=>{
@@ -3374,12 +3451,14 @@ async function exportExcel(){
       const fz=k=>{ if(acred) return 'Sistema'; const v=(rec.fuente||{})[k]; return v==='sistema'?'Sistema':(v?'Usuario':'—'); };
       const teMin   = rec.otMin>0 ? Math.round(rec.otMin) : 0;
       const teHoras = rec.otMin>0 ? Number((rec.otMin/60).toFixed(2)) : 0;
-      const teRes = rec.otMin>0 ? (rec.otEstado==='aprobado'?'Con horas extra aprobadas':rec.otEstado==='rechazado'?'Sin horas extra (rechazado)':'Pendiente de aprobación') : 'Sin tiempo extra';
+      const teAut   = (rec.otMin>0 && rec.otEstado==='aprobado') ? Number((rec.otMin/60).toFixed(2)) : 0;  // tiempo extra autorizado
+      const totalDia = Number(((hr!=null?hr:0) + teAut).toFixed(2));
+      const teRes = rec.otMin>0 ? (rec.otEstado==='aprobado'?'Autorizado (contabilizado)':rec.otEstado==='rechazado'?'Rechazado (no cuenta)':'Pendiente de autorización') : 'Sin tiempo extra';
       const salExtra = (rec.otMin>0 && rec.otEstado==='aprobado') ? rec.salida : '—';
       rows.push([e.nombre,e.nomina,e.pais,(e.clas==='operativo'?'Operativo':'Administrativo'),ymd(day),DIAS[i],estadoTxt,
         rec.entrada,rec.iniComida,rec.finComida,rec.salida,
         fz('entrada'),fz('iniComida'),fz('finComida'),fz('salida'),
-        (hr!=null?Number(hr.toFixed(2)):''),teMin,teHoras,teRes,salExtra,(rec.otComentario||''),
+        (hr!=null?Number(hr.toFixed(2)):''),teMin,teHoras,teAut,totalDia,teRes,salExtra,(rec.otComentario||''),
         (rec.reqAut?'Sí':'No'),(rec.reqAut?(autL[rec.autEstado||'pendiente']||rec.autEstado):'—'),(rec.autComentario||''),
         (rec.comments||[]).map(c=>c.txt+' ('+c.by+')').join(' | ')]);
     };
@@ -3413,11 +3492,11 @@ async function exportExcel(){
     colMeta=[{w:26},{w:11},{w:15},{w:14},{w:12},{w:7},{w:13},
       {w:9},{w:12},{w:11},{w:9},
       {w:15},{w:17},{w:17},{w:15},
-      {w:14,numFmt:'0.00'},{w:12,numFmt:'0'},{w:13,numFmt:'0.00'},{w:24},{w:20},{w:24},
+      {w:15,numFmt:'0.00'},{w:14,numFmt:'0'},{w:15,numFmt:'0.00'},{w:16,numFmt:'0.00'},{w:14,numFmt:'0.00'},{w:22},{w:20},{w:24},
       {w:14},{w:16},{w:24},{w:30}];
     grupos=[{label:'Identificación',span:4},{label:'Día',span:3},
       {label:'Marcas del día',span:4},{label:'¿Quién registró?',span:4},
-      {label:'Horas y tiempo extra',span:6},{label:'Autorización',span:3},
+      {label:'Horas y tiempo extra',span:8},{label:'Autorización',span:3},
       {label:'Comentarios',span:1}];
   }
   await descargarLibro(sheet, titulo, subtitulo, rows, colMeta, fname, grupos);
