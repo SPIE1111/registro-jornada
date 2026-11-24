@@ -788,7 +788,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Intenta restaurar la sesión si sigue vigente (refrescar no cierra sesión dentro de los 15 min)
   try{ intentarRestaurarSesion(); }catch(e){ console.warn('restaurar sesión', e); }
 });
-const APP_VERSION='v14 · 24-nov-2026 (Sesión persistente + cierre por 15 min de inactividad · cierre del día anterior · login sin leyendas)';
+const APP_VERSION='v15 · 24-nov-2026 (Solicitud de salida anticipada registra la salida y cierra el día · cierre nocturno respeta la salida anticipada)';
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
 function hoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -1838,12 +1838,28 @@ async function enviarSolicitud(){
   const hora=document.getElementById('solHora')?document.getElementById('solHora').value:'';
   const motivo=document.getElementById('solMotivo').value.trim();
   if(!ini){ alert('Indica la fecha.'); return; }
+  if(tipo==='salida_anticipada' && ini===hoyISO() && !hora){ alert('Indica la hora a la que saldrás.'); return; }
   const ok=await DB.crearSolicitud({tipo, ini, fin, hora, motivo});
   if(ok){
     misSolicitudes = await DB.misSolicitudes(U.id);
     addNotif('green','📨','Tu solicitud de '+(TIPO_SOL[tipo]||tipo)+' se envió. Tu supervisor la revisará.');
+    // Salida anticipada para HOY: registra la salida a esa hora y cierra el día (te deja avanzar)
+    if(tipo==='salida_anticipada' && ini===hoyISO() && hora && !jornadaCerrada){
+      registrarSalidaAnticipada(hora, motivo);
+      return;
+    }
     view='check'; render(); renderMisSolicitudes();
   }
+}
+function registrarSalidaAnticipada(hora, motivo){
+  const t=parseInt(hora.split(':')[0],10)*60+parseInt(hora.split(':')[1],10);
+  if(isNaN(t)){ alert('Hora de salida inválida.'); view='check'; render(); return; }
+  if(T0!=null && t<=T0){ alert('La hora de salida debe ser posterior a tu entrada.'); view='check'; render(); return; }
+  checks.fin_jornada={min:t, log:false, por:'usuario', anticipada:true, motivo:motivo||null};
+  overtimeMin=0;
+  addNotif('blue','🏁','Registramos tu salida anticipada a las '+fmt(t)+'. Tu solicitud quedó pendiente de aprobación de tu supervisor.');
+  finalizeJornada(t);          // guarda la salida, cierra la jornada y muestra el resumen
+  renderMisSolicitudes();
 }
 function renderMisSolicitudes(){
   const el=document.getElementById('misSolList'); if(!el) return;
