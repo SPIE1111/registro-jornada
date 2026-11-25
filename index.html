@@ -788,7 +788,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Intenta restaurar la sesión si sigue vigente (refrescar no cierra sesión dentro de los 15 min)
   try{ intentarRestaurarSesion(); }catch(e){ console.warn('restaurar sesión', e); }
 });
-const APP_VERSION='v21 · 25-nov-2026 (Salida anticipada registra aunque la jornada ya estuviera cerrada)';
+const APP_VERSION='v22 · 25-nov-2026 (Salida anticipada queda pendiente de aprobacion y no cuenta hasta que el supervisor la apruebe)';
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
 function hoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -998,6 +998,14 @@ const DB = {
       error=r2.error;
     }
     if(error) console.warn('cerrarJornada', error);
+  },
+  // marca el día como que requiere aprobación del supervisor (salida anticipada) → queda pendiente
+  async marcarSalidaAnticipada(jId, comentario){
+    if(!SB_LIVE || !jId) return;
+    const { error } = await sb.from('jornadas').update({
+      requiere_autorizacion:true, autorizacion_estado:'pendiente', autorizacion_comentario:comentario||null
+    }).eq('id', jId);
+    if(error) console.warn('marcarSalidaAnticipada', error);
   },
 
   /* ---------- GRUPOS DE TÉCNICOS Y APROBACIÓN ---------- */
@@ -1867,9 +1875,17 @@ function registrarSalidaAnticipada(hora, motivo){
   // el motivo libre (p. ej. "Cita médica") va al detalle de texto, NO al campo enum 'motivo'
   checks.fin_jornada={min:t, log:false, por:'usuario', anticipada:true, motivo:null, motivoTexto:motivo||null};
   overtimeMin=0;
-  addNotif('blue','🏁','Registramos tu salida anticipada a las '+fmt(t)+'. Tu solicitud quedó pendiente de aprobación de tu supervisor.');
-  finalizeJornada(t);          // guarda la salida, cierra la jornada y muestra el resumen
+  jornadaCerrada=true;
+  // la salida anticipada NECESITA aprobación del supervisor → queda pendiente y no cuenta hasta aprobarse
+  requiereAut=true; autEstadoHoy='pendiente';
+  const finStep=flow.find(s=>s.k==='fin_jornada');
+  if(finStep) DB.guardarCheck(finStep, checks.fin_jornada);   // registra la salida (para que avances)
+  DB.cerrarJornada(checks.fin_jornada);                        // cierra la jornada
+  DB.marcarSalidaAnticipada(jornadaId, 'Salida anticipada'+(motivo?': '+motivo:''));  // la deja pendiente de aprobación
+  updateAcc();
+  addNotif('amber','⏳','Registramos tu salida anticipada a las '+fmt(t)+'. Queda PENDIENTE de aprobación de tu supervisor; hasta que la apruebe no se contabiliza.');
   renderMisSolicitudes();
+  view='resumen'; render();
 }
 function renderMisSolicitudes(){
   const el=document.getElementById('misSolList'); if(!el) return;
@@ -2450,8 +2466,10 @@ async function cargarAcumuladoPrevio(){
       const dd=new Date(mon); dd.setDate(mon.getDate()+i); const marca=covU[ymd(dd)];
       const hr = horasReales(rec, marca); if(hr==null) return;
       const extra = extraContado(rec);           // tiempo extra aprobado (horas)
-      if(i<5) prevSemana += hr + extra;          // lunes a viernes = base + extra aprobado (vacaciones/permiso/incapacidad = 8 h)
-      else if(rec.autEstado==='autorizada') prevSemana += hr + extra;  // sábado/domingo solo si se autorizó
+      // un día que requiere aprobación (fin de semana, o salida anticipada pendiente) solo cuenta si está AUTORIZADO
+      const requiereAprob = (i>=5) || rec.reqAut;
+      if(requiereAprob && rec.autEstado!=='autorizada') return;   // pendiente/rechazado → no cuenta
+      prevSemana += hr + extra;
     });
   }catch(e){ console.warn('cargarAcumuladoPrevio', e); }
 }
@@ -2471,14 +2489,15 @@ function accValues(){
     const desc = descansos.reduce((a,d)=>a+d.dur,0);
     baseDia=Math.max(0,(bruto - comida - desc)/60);
   }
-  // El acumulado es de lunes a viernes. Sábado, domingo o festivo son días ADICIONALES:
-  // solo suman si el supervisor autorizó el día. El tiempo extra suma solo si fue aprobado.
+  // Un día que REQUIERE APROBACIÓN (fin de semana/festivo, o salida anticipada) NO cuenta
+  // hasta que el supervisor lo autorice. El tiempo extra suma solo si fue aprobado.
   let today=0;
   const esDiaExtra = esFinde || !!esFestivo;
-  if(!esDiaExtra){
-    today = baseDia + (otEstadoHoy==='aprobado' ? ot : 0);
-  } else {
+  const necesitaAprob = esDiaExtra || autEstadoHoy==='pendiente' || autEstadoHoy==='rechazada';
+  if(necesitaAprob){
     today = (autEstadoHoy==='autorizada') ? (baseDia + (otEstadoHoy==='aprobado'?ot:0)) : 0;
+  } else {
+    today = baseDia + (otEstadoHoy==='aprobado' ? ot : 0);
   }
   const tot=prevSemana+today;
   const pct=Math.min(100, tot/META*100);
@@ -3038,7 +3057,9 @@ function openDet(empId,weekKey,dayIdx){
     const estCls={pendiente:'amber',autorizada:'green',rechazada:'red'}[est]||'amber';
     const diffDias=Math.floor((Date.now()-day.getTime())/86400000);
     const fueraVentana = diffDias>7;
-    h+='<div class="det-row" style="margin-top:10px;border-top:1px solid var(--line);padding-top:12px"><span>📅 Fin de semana / festivo — requiere autorización</span></div>';
+    const esFinDeSem = (day.getDay()===0 || day.getDay()===6);
+    const tituloAut = esFinDeSem ? '📅 Fin de semana / festivo — requiere autorización' : '🏁 Salida anticipada — requiere aprobación';
+    h+='<div class="det-row" style="margin-top:10px;border-top:1px solid var(--line);padding-top:12px"><span>'+tituloAut+'</span></div>';
     h+='<div class="det-row"><span>Estado</span><span><span class="chip '+estCls+'">'+estLbl+'</span></span></div>';
     if(rec.autComentario) h+='<div class="det-row"><span>Comentario</span><span style="text-align:right;max-width:60%">'+rec.autComentario+'</span></div>';
     if(U && U.supervisor && detCtx.empId===U.id){
@@ -3377,7 +3398,8 @@ async function renderDiasPorAprobar(){
   const items=[];
   dias.forEach(d=>{
     if(d.otEstado==='pendiente') items.push({tipo:'ot', d, etq:'Tiempo extra', detalle:(d.otMin||0)+' min ('+((d.otMin||0)/60).toFixed(2)+' h)'});
-    if(d.autEstado==='pendiente') items.push({tipo:'aut', d, etq:'Día trabajado (fin de semana/festivo)', detalle:'Requiere autorización'});
+    if(d.autEstado==='pendiente'){ const dw=new Date(d.fecha+'T00:00:00').getDay(); const finde=(dw===0||dw===6);
+      items.push({tipo:'aut', d, etq: finde?'Día trabajado (fin de semana/festivo)':'Salida anticipada', detalle:'Requiere aprobación'}); }
   });
   if(!items.length){ box.innerHTML=''; return; }
   let html='<div class="card" style="padding:12px;margin-bottom:12px;border:1.5px solid var(--amber)">'+
