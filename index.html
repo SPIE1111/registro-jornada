@@ -788,7 +788,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Intenta restaurar la sesión si sigue vigente (refrescar no cierra sesión dentro de los 15 min)
   try{ intentarRestaurarSesion(); }catch(e){ console.warn('restaurar sesión', e); }
 });
-const APP_VERSION='v19 · 24-nov-2026 (Aprobacion de tiempo extra en fracciones de hora)';
+const APP_VERSION='v20 · 25-nov-2026 (Fix: salida anticipada ya no choca con el enum de motivo; encabezado sin "· null")';
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
 function hoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -1698,7 +1698,7 @@ function startApp(){
   else { roleEl.textContent=''; roleEl.style.display='none'; }
   const d=new Date();
   document.getElementById('hDate').textContent = d.toLocaleDateString('es-MX',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
-  document.getElementById('hGeo').innerHTML = `<b>${U.pais} · ${U.estado}</b><br>Zona horaria: ${tz()}`;
+  document.getElementById('hGeo').innerHTML = `<b>${U.pais}${(U.estado&&U.estado!=='null')?(' · '+U.estado):''}</b><br>Zona horaria: ${tz()}`;
   if(es_campo){ renderEtapas(); renderDescansoList(); }
   // navegación: "Jornada del técnico" para personal de campo; "Panel de registros" para supervisor/RH
   const puedePanel = !!(U.supervisor || U.es_rh);
@@ -1863,7 +1863,8 @@ function registrarSalidaAnticipada(hora, motivo){
   const t=parseInt(hora.split(':')[0],10)*60+parseInt(hora.split(':')[1],10);
   if(isNaN(t)){ alert('Hora de salida inválida.'); view='check'; render(); return; }
   if(T0!=null && t<=T0){ alert('La hora de salida debe ser posterior a tu entrada.'); view='check'; render(); return; }
-  checks.fin_jornada={min:t, log:false, por:'usuario', anticipada:true, motivo:motivo||null};
+  // el motivo libre (p. ej. "Cita médica") va al detalle de texto, NO al campo enum 'motivo'
+  checks.fin_jornada={min:t, log:false, por:'usuario', anticipada:true, motivo:null, motivoTexto:motivo||null};
   overtimeMin=0;
   addNotif('blue','🏁','Registramos tu salida anticipada a las '+fmt(t)+'. Tu solicitud quedó pendiente de aprobación de tu supervisor.');
   finalizeJornada(t);          // guarda la salida, cierra la jornada y muestra el resumen
