@@ -205,7 +205,7 @@
   .cell{display:inline-flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;padding:4px 6px;border-radius:8px;min-width:56px}
   .cell:hover{background:var(--paper)}
   .st-dot{width:10px;height:10px;border-radius:50%}
-  .st-completo{background:var(--green)} .st-incompleto{background:var(--amber)} .st-vacaciones{background:var(--blue)} .st-pendiente{background:var(--line)} .st-descanso{background:var(--red)} .st-ausencia{background:#8b5cf6}
+  .st-completo{background:var(--green)} .st-incompleto{background:var(--amber)} .st-vacaciones{background:var(--blue)} .st-pendiente{background:var(--line)} .st-descanso{background:var(--red)} .st-ausencia{background:#8b5cf6} .st-pend_aprob{background:var(--amber)}
   .cell .txt{font-size:10.5px;color:var(--gray)}
   .cell .cmt{font-size:11px}
   .lgd{display:flex;gap:16px;flex-wrap:wrap;margin:14px 2px 0;font-size:12px;color:var(--gray)}
@@ -788,7 +788,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Intenta restaurar la sesión si sigue vigente (refrescar no cierra sesión dentro de los 15 min)
   try{ intentarRestaurarSesion(); }catch(e){ console.warn('restaurar sesión', e); }
 });
-const APP_VERSION='v22 · 25-nov-2026 (Salida anticipada queda pendiente de aprobacion y no cuenta hasta que el supervisor la apruebe)';
+const APP_VERSION='v23 · 25-nov-2026 (Salida anticipada: se guarda y se muestra como Pendiente de aprobacion, no Completo)';
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
 function hoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -999,13 +999,20 @@ const DB = {
     }
     if(error) console.warn('cerrarJornada', error);
   },
-  // marca el día como que requiere aprobación del supervisor (salida anticipada) → queda pendiente
-  async marcarSalidaAnticipada(jId, comentario){
-    if(!SB_LIVE || !jId) return;
-    const { error } = await sb.from('jornadas').update({
-      requiere_autorizacion:true, autorizacion_estado:'pendiente', autorizacion_comentario:comentario||null
-    }).eq('id', jId);
-    if(error) console.warn('marcarSalidaAnticipada', error);
+  // cierra el día por SALIDA ANTICIPADA en UNA sola operación: registra la salida y lo deja
+  // pendiente de aprobación (así la protección de inmutabilidad no bloquea una 2ª actualización).
+  async cerrarSalidaAnticipada(rec, comentario){
+    if(!SB_LIVE || !jornadaId) return;
+    const full = { hora_salida_real:tsHoy(rec.min), estado:'cerrada',
+      requiere_autorizacion:true, autorizacion_estado:'pendiente', autorizacion_comentario:comentario||null,
+      tiempo_extra_min:0, tiempo_extra_voluntario:false, tiempo_extra_aceptado_en:null };
+    let { error } = await sb.from('jornadas').update(full).eq('id', jornadaId);
+    if(error){  // reintenta sin columnas de tiempo extra por si no existen
+      const base = { hora_salida_real:tsHoy(rec.min), estado:'cerrada',
+        requiere_autorizacion:true, autorizacion_estado:'pendiente', autorizacion_comentario:comentario||null };
+      const r2 = await sb.from('jornadas').update(base).eq('id', jornadaId); error=r2.error;
+    }
+    if(error) console.warn('cerrarSalidaAnticipada', error);
   },
 
   /* ---------- GRUPOS DE TÉCNICOS Y APROBACIÓN ---------- */
@@ -1158,6 +1165,8 @@ const DB = {
       if(j.es_vacaciones) rec.status='vacaciones';
       else if(j.estado==='cerrada'||j.estado==='cerrada_tardia') rec.status='completo';
       else if(rec.entrada||rec.iniComida||rec.finComida||rec.salida) rec.status='incompleto';
+      // un día que requiere aprobación y aún no está autorizado → pendiente de aprobación (no "completo")
+      if(rec.reqAut && rec.autEstado && rec.autEstado!=='autorizada' && rec.status!=='vacaciones') rec.status='pend_aprob';
     });
     // etapas de la jornada del técnico (personal de campo)
     try{
@@ -1880,8 +1889,7 @@ function registrarSalidaAnticipada(hora, motivo){
   requiereAut=true; autEstadoHoy='pendiente';
   const finStep=flow.find(s=>s.k==='fin_jornada');
   if(finStep) DB.guardarCheck(finStep, checks.fin_jornada);   // registra la salida (para que avances)
-  DB.cerrarJornada(checks.fin_jornada);                        // cierra la jornada
-  DB.marcarSalidaAnticipada(jornadaId, 'Salida anticipada'+(motivo?': '+motivo:''));  // la deja pendiente de aprobación
+  DB.cerrarSalidaAnticipada(checks.fin_jornada, 'Salida anticipada'+(motivo?': '+motivo:''));  // cierra Y deja pendiente de aprobación (1 sola operación)
   updateAcc();
   addNotif('amber','⏳','Registramos tu salida anticipada a las '+fmt(t)+'. Queda PENDIENTE de aprobación de tu supervisor; hasta que la apruebe no se contabiliza.');
   renderMisSolicitudes();
@@ -2630,7 +2638,7 @@ function tick(){
 
 /* ================= PANEL DE REGISTROS (ADMIN) ================= */
 const DIAS=['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
-const ST_LBL={completo:'Completo',incompleto:'Incompleto',vacaciones:'Vacaciones',pendiente:'—',descanso:'Descanso'};
+const ST_LBL={completo:'Completo',incompleto:'Incompleto',vacaciones:'Vacaciones',pendiente:'—',descanso:'Descanso',pend_aprob:'Pendiente de aprobación'};
 const TIPO_LBL={entrada:'Entrada',iniComida:'Inicio de comida',finComida:'Fin de comida',salida:'Salida'};
 let curWeek=0, adminStore={}, detCtx=null, admView='reg', editId=null, bulkText='';
 let GRUPOS_ADMIN=[], grpCtx=null;   // grupos cargados en el panel del supervisor
