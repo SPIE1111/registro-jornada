@@ -788,7 +788,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Intenta restaurar la sesión si sigue vigente (refrescar no cierra sesión dentro de los 15 min)
   try{ intentarRestaurarSesion(); }catch(e){ console.warn('restaurar sesión', e); }
 });
-const APP_VERSION='v20 · 25-nov-2026 (Fix: salida anticipada ya no choca con el enum de motivo; encabezado sin "· null")';
+const APP_VERSION='v21 · 25-nov-2026 (Salida anticipada registra aunque la jornada ya estuviera cerrada)';
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
 function hoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -1851,8 +1851,9 @@ async function enviarSolicitud(){
   if(ok){
     misSolicitudes = await DB.misSolicitudes(U.id);
     addNotif('green','📨','Tu solicitud de '+(TIPO_SOL[tipo]||tipo)+' se envió. Tu supervisor la revisará.');
-    // Salida anticipada para HOY: registra la salida a esa hora y cierra el día (te deja avanzar)
-    if(tipo==='salida_anticipada' && ini===hoyISO() && hora && !jornadaCerrada){
+    // Salida anticipada para HOY: registra la salida a esa hora y cierra el día (te deja avanzar).
+    // Se registra aunque la jornada ya estuviera cerrada (corrige/actualiza la salida).
+    if(tipo==='salida_anticipada' && ini===hoyISO() && hora){
       registrarSalidaAnticipada(hora, motivo);
       return;
     }
