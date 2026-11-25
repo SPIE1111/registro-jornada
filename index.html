@@ -788,7 +788,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Intenta restaurar la sesión si sigue vigente (refrescar no cierra sesión dentro de los 15 min)
   try{ intentarRestaurarSesion(); }catch(e){ console.warn('restaurar sesión', e); }
 });
-const APP_VERSION='v23 · 25-nov-2026 (Salida anticipada: se guarda y se muestra como Pendiente de aprobacion, no Completo)';
+const APP_VERSION='v24 · 25-nov-2026 (Una sola salida anticipada por dia; resumen muestra Pendiente de aprobacion, no Finalizada)';
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
 function hoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -1012,7 +1012,7 @@ const DB = {
         requiere_autorizacion:true, autorizacion_estado:'pendiente', autorizacion_comentario:comentario||null };
       const r2 = await sb.from('jornadas').update(base).eq('id', jornadaId); error=r2.error;
     }
-    if(error) console.warn('cerrarSalidaAnticipada', error);
+    if(error){ console.warn('cerrarSalidaAnticipada', error); avisoGuardado('la salida anticipada', error); }
   },
 
   /* ---------- GRUPOS DE TÉCNICOS Y APROBACIÓN ---------- */
@@ -1863,7 +1863,14 @@ async function enviarSolicitud(){
   const hora=document.getElementById('solHora')?document.getElementById('solHora').value:'';
   const motivo=document.getElementById('solMotivo').value.trim();
   if(!ini){ alert('Indica la fecha.'); return; }
-  if(tipo==='salida_anticipada' && ini===hoyISO() && !hora){ alert('Indica la hora a la que saldrás.'); return; }
+  if(tipo==='salida_anticipada' && ini===hoyISO()){
+    if(!hora){ alert('Indica la hora a la que saldrás.'); return; }
+    // una sola salida anticipada por día: si ya hay salida registrada hoy, no se permite otra (evita el choque)
+    if(checks.fin_jornada || jornadaCerrada){
+      alert('Ya registraste tu salida de hoy; no puedes registrar otra salida anticipada. Si está pendiente, espera la aprobación de tu supervisor.');
+      view='check'; render(); return;
+    }
+  }
   const ok=await DB.crearSolicitud({tipo, ini, fin, hora, motivo});
   if(ok){
     misSolicitudes = await DB.misSolicitudes(U.id);
@@ -2175,9 +2182,13 @@ function goNext(i){ vi=i; view='check'; render(); }
 function renderResumen(){
   const m=document.getElementById('main');
   const {today, ot, tot, pct} = accValues();
-  document.getElementById('stepCount').textContent='jornada cerrada';
-  m.innerHTML = `<div class="valid-hero"><div class="ring" style="background:var(--blue-050);color:var(--blue)">🎉</div>
-      <h3>Jornada finalizada</h3><p>${U.nombre} · ${new Date().toLocaleDateString('es-MX',{day:'numeric',month:'long'})}.</p>
+  const salAntPend = !!(checks.fin_jornada && checks.fin_jornada.anticipada && autEstadoHoy!=='autorizada');
+  document.getElementById('stepCount').textContent = salAntPend? 'pendiente de aprobación' : 'jornada cerrada';
+  const heroIcon = salAntPend? '⏳' : '🎉';
+  const heroTit  = salAntPend? 'Salida anticipada registrada' : 'Jornada finalizada';
+  m.innerHTML = `<div class="valid-hero"><div class="ring" style="background:${salAntPend?'var(--amber-bg)':'var(--blue-050)'};color:${salAntPend?'var(--amber)':'var(--blue)'}">${heroIcon}</div>
+      <h3>${heroTit}</h3><p>${U.nombre} · ${new Date().toLocaleDateString('es-MX',{day:'numeric',month:'long'})}.</p>
+      ${salAntPend?'<div class="chip amber" style="margin-top:4px">Pendiente de aprobación de tu supervisor — aún no se contabiliza</div>':''}
       <p style="margin-top:6px;font-size:15px;color:var(--blue)">Entrada <b>${checks.inicio_jornada?fmt(checks.inicio_jornada.min):'—'}</b> &nbsp;·&nbsp; Salida <b>${checks.fin_jornada?fmt(checks.fin_jornada.min):'—'}</b></p></div>
     ${orderedHistory()}
     <div class="card" style="margin-top:16px;background:var(--paper)">
