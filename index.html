@@ -447,12 +447,14 @@
         <div class="lgd">
           <span><i class="st-dot st-completo"></i> Completo</span>
           <span><i class="st-dot st-incompleto"></i> Incompleto</span>
+          <span><i class="st-dot st-pend_aprob"></i> Pendiente de aprobación</span>
           <span><i class="st-dot st-vacaciones"></i> Vacaciones</span>
           <span><i class="st-dot st-ausencia"></i> Ausencia / incidencia</span>
           <span><i class="st-dot st-pendiente"></i> Sin registro</span>
           <span>💬 Con comentario</span>
           <span>⏱ Tiempo extra</span>
           <span>⚑ Requiere autorización</span>
+          <span><b>0.0 h</b> = horas del día · <b style="color:var(--amber)">*</b> pendiente de aprobación</span>
         </div>
       </div>
 
@@ -788,7 +790,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Intenta restaurar la sesión si sigue vigente (refrescar no cierra sesión dentro de los 15 min)
   try{ intentarRestaurarSesion(); }catch(e){ console.warn('restaurar sesión', e); }
 });
-const APP_VERSION='v24 · 25-nov-2026 (Una sola salida anticipada por dia; resumen muestra Pendiente de aprobacion, no Finalizada)';
+const APP_VERSION='v26 · 26-nov-2026 (Salida anticipada aprobada cuenta como jornada completa 8 h)';
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
 function hoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -1162,6 +1164,9 @@ const DB = {
       rec.reqAut = !!j.requiere_autorizacion;
       rec.autEstado = j.autorizacion_estado||null;
       rec.autComentario = j.autorizacion_comentario||'';
+      // salida anticipada = día laborable (no fin de semana) que requiere aprobación y con salida antes de las 17:30
+      { const _dow=d.getDay(); const _salM=hhmmToMin(rec.salida);
+        rec.salAnt = !!(rec.reqAut && _dow!==0 && _dow!==6 && _salM!=null && _salM < SALIDA_FIJA); }
       if(j.es_vacaciones) rec.status='vacaciones';
       else if(j.estado==='cerrada'||j.estado==='cerrada_tardia') rec.status='completo';
       else if(rec.entrada||rec.iniComida||rec.finComida||rec.salida) rec.status='incompleto';
@@ -2512,9 +2517,14 @@ function accValues(){
   // hasta que el supervisor lo autorice. El tiempo extra suma solo si fue aprobado.
   let today=0;
   const esDiaExtra = esFinde || !!esFestivo;
-  const necesitaAprob = esDiaExtra || autEstadoHoy==='pendiente' || autEstadoHoy==='rechazada';
+  // ¿hoy fue una salida anticipada? (día laborable, salida antes de las 17:30, que pasa por aprobación)
+  const salAntHoy = !esDiaExtra && !!checks.fin_jornada && checks.fin_jornada.min < SALIDA_FIJA
+                    && (autEstadoHoy==='pendiente' || autEstadoHoy==='autorizada' || autEstadoHoy==='rechazada');
+  const necesitaAprob = esDiaExtra || autEstadoHoy==='pendiente' || autEstadoHoy==='rechazada' || salAntHoy;
   if(necesitaAprob){
-    today = (autEstadoHoy==='autorizada') ? (baseDia + (otEstadoHoy==='aprobado'?ot:0)) : 0;
+    // aprobada: la salida anticipada cuenta como jornada completa (8 h); el finde/festivo cuenta las horas reales
+    const baseAprob = salAntHoy ? HORAS_AUSENCIA : baseDia;
+    today = (autEstadoHoy==='autorizada') ? (baseAprob + (otEstadoHoy==='aprobado'?ot:0)) : 0;
   } else {
     today = baseDia + (otEstadoHoy==='aprobado' ? ot : 0);
   }
@@ -2845,6 +2855,9 @@ function esDiaAcreditado(rec, marca){
 function horasReales(rec, marca){
   // vacaciones / permiso / incapacidad → 8 h, para no perder el conteo de horas laboradas
   if(esDiaAcreditado(rec, marca)) return HORAS_AUSENCIA;
+  // salida anticipada APROBADA por el supervisor → cuenta como jornada completa (8 h);
+  // los registros reales (entrada, comida, hora de salida) se conservan y se muestran aparte.
+  if(rec && rec.salAnt && rec.autEstado==='autorizada') return HORAS_AUSENCIA;
   const ent=hhmmToMin(rec.entrada), sal=hhmmToMin(rec.salida);
   if(ent==null||sal==null) return null;
   // día autorizado (fin de semana/festivo programado por el supervisor) → cuenta completo;
@@ -2971,7 +2984,9 @@ async function renderReg(){
       // Prioridad: día cubierto por vacaciones/ausencia → marcado y no contabilizado
       const marca = cov[e.id] && cov[e.id][dstr];
       if(marca){
-        body+='<td><span class="cell" style="cursor:default" title="'+marca.label+' — no se cuenta como trabajado"><span class="st-dot st-'+(marca.tipo==='vacaciones'?'vacaciones':'ausencia')+'"></span><span class="txt">'+marca.label+'</span></span></td>';
+        const acred = esDiaAcreditado(null, marca);   // vacaciones/permiso/incapacidad = 8 h
+        const hTxt = acred? '<div style="font-size:12.5px;font-weight:700;margin-top:3px;color:var(--blue)">'+HORAS_AUSENCIA.toFixed(1)+' h</div>' : '';
+        body+='<td><span class="cell" style="cursor:default" title="'+marca.label+(acred?' — cuenta '+HORAS_AUSENCIA+' h':' — no cuenta')+'"><span class="st-dot st-'+(marca.tipo==='vacaciones'?'vacaciones':'ausencia')+'"></span><span class="txt">'+marca.label+'</span>'+hTxt+'</span></td>';
         return;
       }
       // filtro por tipo de registro: muestra la hora de esa marca (con ⚙ si la puso el sistema)
@@ -2988,8 +3003,15 @@ async function renderReg(){
       const otm = rec.otMin>0? '<span class="cmt" title="Tiempo extra: '+(rec.otEstado||'pendiente')+'">⏱</span>':'';
       const aut = rec.reqAut? '<span class="cmt" title="Autorización: '+(rec.autEstado||'pendiente')+'">'+(rec.autEstado==='autorizada'?'✅':(rec.autEstado==='rechazada'?'⛔':'⚑'))+'</span>':'';
       const festm = esFest? '<span class="cmt" title="Día festivo">🎌</span>':'';
+      // horas trabajadas del día (base + tiempo extra aprobado)
+      const hrDia = horasReales(rec);
+      const totDia = (hrDia!=null? hrDia:0) + extraContado(rec);
+      const pendiente = rec.reqAut && rec.autEstado && rec.autEstado!=='autorizada';
+      const horasTxt = (hrDia!=null)
+        ? '<div style="font-size:12.5px;font-weight:700;margin-top:3px;color:'+(pendiente?'var(--amber)':'var(--blue)')+'">'+totDia.toFixed(1)+' h'+(pendiente?' *':'')+'</div>'
+        : '';
       body+='<td>'+(clickable
-        ? '<span class="cell" onclick="openDet(\''+e.id+'\',\''+ymd(mon)+'\','+i+')"><span class="st-dot st-'+rec.status+'"></span><span class="txt">'+ST_LBL[rec.status]+'</span>'+cmt+otm+aut+festm+'</span>'
+        ? '<span class="cell" onclick="openDet(\''+e.id+'\',\''+ymd(mon)+'\','+i+')"><span class="st-dot st-'+rec.status+'"></span><span class="txt">'+ST_LBL[rec.status]+'</span>'+cmt+otm+aut+festm+horasTxt+'</span>'
         : (esFest
             ? '<span class="cell" style="cursor:default"><span class="st-dot st-vacaciones"></span><span class="txt">Festivo</span>🎌</span>'
             : '<span class="cell" style="cursor:default;opacity:.5"><span class="st-dot st-pendiente"></span><span class="txt">—</span></span>'))+'</td>';
@@ -3003,9 +3025,10 @@ async function renderReg(){
 async function renderRegDay(fecha){
   const d=new Date(fecha+'T00:00:00'); const mon=mondayOfDate(d);
   const idx=(d.getDay()+6)%7; const data=await ensureWeek(mon);
+  let cov={}; try{ cov=await coberturaSemana(mon); }catch(e){}
   const tipo=document.getElementById('fTipo').value;
   document.getElementById('wkLbl').textContent='';
-  let head='<thead><tr><th class="name">Empleado</th><th>Nómina</th><th>País</th><th class="left">Entrada</th><th>Inicio comida</th><th>Fin comida</th><th>Salida</th><th>Estado</th><th>Coment.</th></tr></thead>';
+  let head='<thead><tr><th class="name">Empleado</th><th>Nómina</th><th>País</th><th class="left">Entrada</th><th>Inicio comida</th><th>Fin comida</th><th>Salida</th><th>Horas</th><th>Estado</th><th>Coment.</th></tr></thead>';
   let body='<tbody>';
   const emps=regEmployees().filter(e=>{
     if(tipo==='todos') return true;
@@ -3021,6 +3044,7 @@ async function renderRegDay(fecha){
       +'<td '+hl('iniComida')+'>'+(rec.iniComida||'—')+'</td>'
       +'<td '+hl('finComida')+'>'+(rec.finComida||'—')+'</td>'
       +'<td '+hl('salida')+'>'+(rec.salida||'—')+'</td>'
+      +'<td><b>'+(()=>{ const m=cov[e.id]&&cov[e.id][fecha]; const hr=horasReales(rec,m); const tot=(hr!=null?hr:0)+extraContado(rec); return hr!=null?tot.toFixed(1)+' h':'—'; })()+'</b></td>'
       +'<td><span class="st-dot st-'+rec.status+'"></span> '+ST_LBL[rec.status]+'</td>'
       +'<td>'+(rec.comments.length?'💬 '+rec.comments.length:'—')+'</td></tr>';
   });
@@ -3040,11 +3064,23 @@ function openDet(empId,weekKey,dayIdx){
   let h='<div class="det-row"><span class="st-dot st-'+rec.status+'"></span><b>Estado: '+ST_LBL[rec.status]+'</b></div>';
   if(rec.status==='vacaciones') h+='<div class="det-row"><span>Día de vacaciones — registro completo automático.</span></div>';
   else {
-    h+=row('Entrada',rec.entrada)+row('Inicio de comida',rec.iniComida)+row('Fin de comida',rec.finComida)+row('Salida',rec.salida);
-    const hr=horasReales(rec);
-    if(hr!=null){
-      h+='<div class="det-row" style="margin-top:6px;border-top:1px solid var(--line);padding-top:8px"><span><b>Horas laboradas (reales)</b></span><span class="tm">'+hr.toFixed(2)+' h</span></div>';
-      if(rec.otMin>0 && rec.otEstado!=='aprobado') h+='<div class="det-row"><span style="font-size:12px;color:var(--gray)">No incluye '+rec.otMin+' min de tiempo extra (aún no aprobado).</span></div>';
+    h+=row('Entrada',rec.entrada)+row('Inicio de comida',rec.iniComida)+row('Fin de comida',rec.finComida)+row('Salida'+(rec.salAnt?' (anticipada)':''),rec.salida);
+    // horas reales trabajadas (sin el crédito de jornada completa), para mostrarlas aparte en el detalle
+    const _e=hhmmToMin(rec.entrada), _s=hhmmToMin(rec.salida);
+    let realHr=null;
+    if(_e!=null&&_s!=null){ let m=Math.max(0,Math.min(_s,SALIDA_FIJA)-_e); const _ic=hhmmToMin(rec.iniComida),_fc=hhmmToMin(rec.finComida); if(_ic!=null&&_fc!=null&&_fc>_ic) m-=(_fc-_ic); realHr=Math.max(0,m)/60; }
+    if(rec.salAnt){
+      // salida anticipada: siempre pasa por aprobación; si está autorizada cuenta como jornada completa (8 h)
+      h+='<div class="det-row" style="margin-top:6px;border-top:1px solid var(--line);padding-top:8px"><span>🏁 Autorización de salida anticipada</span><span><span class="chip '+(rec.autEstado==='autorizada'?'green':rec.autEstado==='rechazada'?'red':'amber')+'">'+(rec.autEstado==='autorizada'?'Autorizada':rec.autEstado==='rechazada'?'Rechazada':'Pendiente de aprobación')+'</span></span></div>';
+      if(realHr!=null) h+='<div class="det-row"><span style="font-size:12px;color:var(--gray)">Horas realmente trabajadas</span><span class="tm" style="font-size:12px;color:var(--gray)">'+realHr.toFixed(2)+' h</span></div>';
+      if(rec.autEstado==='autorizada') h+='<div class="det-row"><span><b>Cuenta como jornada completa</b></span><span class="tm">'+HORAS_AUSENCIA.toFixed(2)+' h</span></div>';
+      else h+='<div class="det-row"><span style="font-size:12px;color:var(--amber)">Hasta que el supervisor la autorice no se contabiliza.</span></div>';
+    } else {
+      const hr=horasReales(rec);
+      if(hr!=null){
+        h+='<div class="det-row" style="margin-top:6px;border-top:1px solid var(--line);padding-top:8px"><span><b>Horas laboradas (reales)</b></span><span class="tm">'+hr.toFixed(2)+' h</span></div>';
+        if(rec.otMin>0 && rec.otEstado!=='aprobado') h+='<div class="det-row"><span style="font-size:12px;color:var(--gray)">No incluye '+rec.otMin+' min de tiempo extra (aún no aprobado).</span></div>';
+      }
     }
   }
   if(rec.otMin>0){
