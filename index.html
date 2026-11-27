@@ -202,6 +202,12 @@
   table.reg thead th{background:var(--paper);font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray);position:sticky;top:0}
   table.reg td.name,table.reg th.name{text-align:left;font-weight:650;white-space:nowrap;position:sticky;left:0;background:var(--white);z-index:1}
   table.reg thead th.name{background:var(--paper)}
+  /* Reporte (solo lectura): tabla ancha con columnas sin cortar y encabezados de grupo */
+  table.rep-tbl{min-width:1600px;font-size:12px}
+  table.rep-tbl th,table.rep-tbl td{white-space:nowrap;border-right:1px solid var(--line)}
+  table.rep-tbl thead tr.rep-grp th{background:var(--blue);color:#fff;font-size:10.5px;text-transform:none;letter-spacing:0;position:static;border-right:1px solid rgba(255,255,255,.25)}
+  table.rep-tbl tbody tr.rep-row:hover td{background:var(--blue-050)}
+  table.rep-tbl tbody tr.rep-row:nth-child(even) td{background:var(--paper)}
   .cell{display:inline-flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;padding:4px 6px;border-radius:8px;min-width:56px}
   .cell:hover{background:var(--paper)}
   .st-dot{width:10px;height:10px;border-radius:50%}
@@ -408,6 +414,7 @@
         <h1 id="admTitle">Panel de registros</h1>
         <div class="nav" id="admSubNav" style="margin-left:6px">
           <button id="subReg" class="on" onclick="admSub('reg')">Registros</button>
+          <button id="subRep" onclick="admSub('rep')">Reporte</button>
           <button id="subSol" onclick="admSub('sol')">Solicitudes<span id="badgeSol" class="pend-badge"></span></button>
           <button id="subInc" onclick="admSub('inc')" style="display:none">Incidencias</button>
           <button id="subEmp" onclick="admSub('emp')">Empleados</button>
@@ -456,6 +463,32 @@
           <span>⚑ Requiere autorización</span>
           <span><b>0.0 h</b> = horas del día · <b style="color:var(--amber)">*</b> pendiente de aprobación</span>
         </div>
+      </div>
+
+      <!-- ---- SUB-VISTA: REPORTE (solo lectura, igual que el Excel) ---- -->
+      <div id="paneRep" style="display:none">
+        <div class="filters">
+          <select id="rPais" onchange="renderReporte()"></select>
+          <input type="text" id="rBuscar" placeholder="Buscar por nombre o número de nómina…" oninput="buscarRep()">
+          <select id="rTipo" onchange="renderReporte()">
+            <option value="todos">Tipo de registro: todos</option>
+            <option value="entrada">Entrada</option>
+            <option value="iniComida">Inicio de comida</option>
+            <option value="finComida">Fin de comida</option>
+            <option value="salida">Salida</option>
+          </select>
+          <span class="fl-lbl">Fecha:</span>
+          <input type="date" id="rFecha" onchange="renderReporte()">
+          <div class="wk-nav" id="rWkNav">
+            <button onclick="repChangeWeek(-1)">‹</button>
+            <span class="lbl" id="rWkLbl"></span>
+            <button onclick="repChangeWeek(1)">›</button>
+          </div>
+          <button class="btn ghost" style="padding:9px 14px" onclick="repClearFilters()">Limpiar</button>
+          <button class="btn green" style="padding:9px 14px" onclick="exportReporteExcel()">⬇ Descargar Excel</button>
+        </div>
+        <div class="muted-note" style="margin:2px 0 10px">Vista de solo lectura. El reporte muestra lo mismo que el Excel; para ver el detalle o agregar un comentario, toca una fila.</div>
+        <div class="tbl-wrap" style="overflow:auto;max-height:66vh"><table class="reg rep-tbl" id="repTbl"></table></div>
       </div>
 
       <!-- ---- SUB-VISTA: SOLICITUDES ---- -->
@@ -790,7 +823,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Intenta restaurar la sesión si sigue vigente (refrescar no cierra sesión dentro de los 15 min)
   try{ intentarRestaurarSesion(); }catch(e){ console.warn('restaurar sesión', e); }
 });
-const APP_VERSION='v26 · 26-nov-2026 (Salida anticipada aprobada cuenta como jornada completa 8 h)';
+const APP_VERSION='v28 · 27-nov-2026 (Nueva pestaña Reporte: vista del Excel, solo lectura, con descarga)';
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
 function hoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -1139,7 +1172,7 @@ const DB = {
     // Optimización: si son pocos empleados (un empleado o el equipo de un supervisor),
     // filtramos por id para no traer toda la empresa. RH (muchos) carga todo.
     const filtra = ids.length>0 && ids.length<=60;
-    const selFull='id,empleado_id,fecha,estado,es_vacaciones,tiempo_extra_min,tiempo_extra_aprobado_min,tiempo_extra_estado,tiempo_extra_comentario,requiere_autorizacion,autorizacion_estado,autorizacion_comentario,checks(tipo_check,hora_evento,fuente),comentarios_seguimiento(texto,created_at,empleados:autor_id(nombre_completo))';
+    const selFull='id,empleado_id,fecha,estado,es_vacaciones,hora_salida_real,tiempo_extra_min,tiempo_extra_aprobado_min,tiempo_extra_estado,tiempo_extra_comentario,requiere_autorizacion,autorizacion_estado,autorizacion_comentario,checks(tipo_check,hora_evento,fuente),comentarios_seguimiento(texto,created_at,empleados:autor_id(nombre_completo))';
     const selBase='id,empleado_id,fecha,estado,es_vacaciones,tiempo_extra_min,checks(tipo_check,hora_evento),comentarios_seguimiento(texto,created_at,empleados:autor_id(nombre_completo))';
     let q1=sb.from('jornadas').select(selFull).gte('fecha', monISO).lte('fecha', sunISO); if(filtra) q1=q1.in('empleado_id',ids);
     let { data:js, error } = await q1;
@@ -1164,14 +1197,17 @@ const DB = {
       rec.reqAut = !!j.requiere_autorizacion;
       rec.autEstado = j.autorizacion_estado||null;
       rec.autComentario = j.autorizacion_comentario||'';
-      // salida anticipada = día laborable (no fin de semana) que requiere aprobación y con salida antes de las 17:30
+      // respaldo: si no se guardó el check de salida pero la jornada sí tiene hora_salida_real, úsala para mostrar la salida
+      if(!rec.salida && j.hora_salida_real){ rec.salida=hhmm(j.hora_salida_real); if(!rec.fuente.salida) rec.fuente.salida='usuario'; }
+      // salida anticipada = día laborable (no fin de semana) con salida registrada por el usuario ANTES de las 17:30.
+      // No depende de 'requiere_autorizacion' (que a veces no alcanza a guardarse): así siempre se reconoce y se puede aprobar.
       { const _dow=d.getDay(); const _salM=hhmmToMin(rec.salida);
-        rec.salAnt = !!(rec.reqAut && _dow!==0 && _dow!==6 && _salM!=null && _salM < SALIDA_FIJA); }
+        rec.salAnt = !!(_dow!==0 && _dow!==6 && _salM!=null && _salM < SALIDA_FIJA && rec.fuente.salida!=='sistema' && !j.es_vacaciones); }
       if(j.es_vacaciones) rec.status='vacaciones';
       else if(j.estado==='cerrada'||j.estado==='cerrada_tardia') rec.status='completo';
       else if(rec.entrada||rec.iniComida||rec.finComida||rec.salida) rec.status='incompleto';
-      // un día que requiere aprobación y aún no está autorizado → pendiente de aprobación (no "completo")
-      if(rec.reqAut && rec.autEstado && rec.autEstado!=='autorizada' && rec.status!=='vacaciones') rec.status='pend_aprob';
+      // un día que requiere aprobación (finde/festivo o salida anticipada) y aún no está autorizado → pendiente de aprobación (no "completo")
+      if((rec.reqAut||rec.salAnt) && rec.autEstado!=='autorizada' && rec.status!=='vacaciones') rec.status='pend_aprob';
     });
     // etapas de la jornada del técnico (personal de campo)
     try{
@@ -1900,9 +1936,14 @@ function registrarSalidaAnticipada(hora, motivo){
   // la salida anticipada NECESITA aprobación del supervisor → queda pendiente y no cuenta hasta aprobarse
   requiereAut=true; autEstadoHoy='pendiente';
   const finStep=flow.find(s=>s.k==='fin_jornada');
-  if(finStep) DB.guardarCheck(finStep, checks.fin_jornada);   // registra la salida (para que avances)
-  DB.cerrarSalidaAnticipada(checks.fin_jornada, 'Salida anticipada'+(motivo?': '+motivo:''));  // cierra Y deja pendiente de aprobación (1 sola operación)
-  updateAcc();
+  // ORDEN IMPORTANTE: primero fijamos requiere_autorizacion='pendiente' mientras la jornada
+  // sigue EN PROGRESO; si guardáramos antes el check y la jornada se cerrara, la protección de
+  // inmutabilidad podría bloquear ese flag y el día quedaría como "Completo" sin pasar por aprobación.
+  (async()=>{
+    await DB.cerrarSalidaAnticipada(checks.fin_jornada, 'Salida anticipada'+(motivo?': '+motivo:''));
+    if(finStep) await DB.guardarCheck(finStep, checks.fin_jornada);   // registra la salida (para que avances y se vea en Registros)
+    updateAcc();
+  })();
   addNotif('amber','⏳','Registramos tu salida anticipada a las '+fmt(t)+'. Queda PENDIENTE de aprobación de tu supervisor; hasta que la apruebe no se contabiliza.');
   renderMisSolicitudes();
   view='resumen'; render();
@@ -2661,7 +2702,7 @@ function tick(){
 const DIAS=['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
 const ST_LBL={completo:'Completo',incompleto:'Incompleto',vacaciones:'Vacaciones',pendiente:'—',descanso:'Descanso',pend_aprob:'Pendiente de aprobación'};
 const TIPO_LBL={entrada:'Entrada',iniComida:'Inicio de comida',finComida:'Fin de comida',salida:'Salida'};
-let curWeek=0, adminStore={}, detCtx=null, admView='reg', editId=null, bulkText='';
+let curWeek=0, repWeek=0, adminStore={}, detCtx=null, admView='reg', editId=null, bulkText='';
 let GRUPOS_ADMIN=[], grpCtx=null;   // grupos cargados en el panel del supervisor
 function debounce(fn,ms){ let t; return function(){ clearTimeout(t); t=setTimeout(fn,ms); }; }
 const buscarReg = debounce(()=>renderReg(), 300);
@@ -2698,13 +2739,14 @@ function showView(v){
 }
 function admSub(which){
   admView=which;
-  const panes={reg:'paneReg',sol:'paneSol',inc:'paneInc',emp:'paneEmp',fest:'paneFest',aus:'paneAus',vac:'paneVac',grp:'paneGrp'};
-  const subs ={reg:'subReg',sol:'subSol',inc:'subInc',emp:'subEmp',fest:'subFest',aus:'subAus',vac:'subVac',grp:'subGrp'};
-  const titulos={reg:'Panel de registros',sol:'Solicitudes',inc:'Incidencias',emp:'Empleados',fest:'Festivos',aus:'Incidencias',vac:'Vacaciones',grp:'Grupos de técnicos'};
+  const panes={reg:'paneReg',rep:'paneRep',sol:'paneSol',inc:'paneInc',emp:'paneEmp',fest:'paneFest',aus:'paneAus',vac:'paneVac',grp:'paneGrp'};
+  const subs ={reg:'subReg',rep:'subRep',sol:'subSol',inc:'subInc',emp:'subEmp',fest:'subFest',aus:'subAus',vac:'subVac',grp:'subGrp'};
+  const titulos={reg:'Panel de registros',rep:'Reporte',sol:'Solicitudes',inc:'Incidencias',emp:'Empleados',fest:'Festivos',aus:'Incidencias',vac:'Vacaciones',grp:'Grupos de técnicos'};
   Object.entries(panes).forEach(([k,id])=>{ const el=document.getElementById(id); if(el) el.style.display = (k===which)?'block':'none'; });
   Object.entries(subs ).forEach(([k,id])=>{ const el=document.getElementById(id); if(el) el.classList.toggle('on',k===which); });
   document.getElementById('admTitle').textContent = titulos[which]||'Panel';
   if(which==='reg') renderReg();
+  else if(which==='rep') renderReporte();
   else if(which==='sol') renderSol();
   else if(which==='inc') renderInc();
   else if(which==='emp') renderEmp();
@@ -2829,7 +2871,7 @@ async function eliminarGrupoUI(id){
 function populatePaisSelects(){
   const paises=[...new Set(EMP.map(e=>e.pais))].sort();
   const opts='<option value="">Todos los países</option>'+paises.map(p=>'<option value="'+p+'">'+p+'</option>').join('');
-  ['fPais','ePais'].forEach(id=>{ const el=document.getElementById(id); if(el){ const v=el.value; el.innerHTML=opts; el.value=v; } });
+  ['fPais','ePais','rPais'].forEach(id=>{ const el=document.getElementById(id); if(el){ const v=el.value; el.innerHTML=opts; el.value=v; } });
 }
 
 /* ---- fechas ---- */
@@ -2866,7 +2908,9 @@ function horasReales(rec, marca){
   const salBase = diaAutorizado ? sal : Math.min(sal, SALIDA_FIJA);
   let min = salBase - ent;
   const ic=hhmmToMin(rec.iniComida), fc=hhmmToMin(rec.finComida);
-  if(ic!=null&&fc!=null&&fc>ic) min-=(fc-ic);
+  // solo descuenta la parte de la comida que cae DENTRO del horario trabajado (evita restos negativos
+  // cuando el cierre automático dejó una comida fuera del horario, p. ej. comida antes de la entrada)
+  if(ic!=null&&fc!=null&&fc>ic){ const ov=Math.max(0, Math.min(fc,salBase)-Math.max(ic,ent)); min-=ov; }
   return Math.max(0,min)/60;
 }
 // Tiempo extra que SÍ cuenta (horas): los minutos que el supervisor APROBÓ (puede ser menos que lo solicitado).
@@ -3068,7 +3112,7 @@ function openDet(empId,weekKey,dayIdx){
     // horas reales trabajadas (sin el crédito de jornada completa), para mostrarlas aparte en el detalle
     const _e=hhmmToMin(rec.entrada), _s=hhmmToMin(rec.salida);
     let realHr=null;
-    if(_e!=null&&_s!=null){ let m=Math.max(0,Math.min(_s,SALIDA_FIJA)-_e); const _ic=hhmmToMin(rec.iniComida),_fc=hhmmToMin(rec.finComida); if(_ic!=null&&_fc!=null&&_fc>_ic) m-=(_fc-_ic); realHr=Math.max(0,m)/60; }
+    if(_e!=null&&_s!=null){ const _sb=Math.min(_s,SALIDA_FIJA); let m=Math.max(0,_sb-_e); const _ic=hhmmToMin(rec.iniComida),_fc=hhmmToMin(rec.finComida); if(_ic!=null&&_fc!=null&&_fc>_ic){ const _ov=Math.max(0,Math.min(_fc,_sb)-Math.max(_ic,_e)); m-=_ov; } realHr=Math.max(0,m)/60; }
     if(rec.salAnt){
       // salida anticipada: siempre pasa por aprobación; si está autorizada cuenta como jornada completa (8 h)
       h+='<div class="det-row" style="margin-top:6px;border-top:1px solid var(--line);padding-top:8px"><span>🏁 Autorización de salida anticipada</span><span><span class="chip '+(rec.autEstado==='autorizada'?'green':rec.autEstado==='rechazada'?'red':'amber')+'">'+(rec.autEstado==='autorizada'?'Autorizada':rec.autEstado==='rechazada'?'Rechazada':'Pendiente de aprobación')+'</span></span></div>';
@@ -3106,7 +3150,7 @@ function openDet(empId,weekKey,dayIdx){
       h+='<div class="muted-note" style="margin-top:8px;color:var(--gray)">No puedes aprobar tu propio tiempo extra; lo revisa tu supervisor.</div>';
     }
   }
-  if(rec.reqAut){
+  if(rec.reqAut || rec.salAnt){
     const est=rec.autEstado||'pendiente';
     const estLbl={pendiente:'Pendiente de autorización',autorizada:'Autorizada',rechazada:'Rechazada'}[est]||est;
     const estCls={pendiente:'amber',autorizada:'green',rechazada:'red'}[est]||'amber';
@@ -3620,70 +3664,135 @@ async function exportExcel(){
     colMeta=[{w:28},{w:11},{w:16},{w:15},{w:11},{w:9},{w:11}];
     fname='empleados.xlsx';
   } else {
-    sheet='Registros'; titulo='SPIE · Registros de jornada';
-    const fecha=document.getElementById('fFecha').value, tipo=document.getElementById('fTipo').value;
-    rows=[['Empleado','Nómina','País','Clasificación','Fecha','Día','Estado',
-      'Entrada','Inicio comida','Fin comida','Salida',
-      'Entrada registró','Inicio comida registró','Fin comida registró','Salida registró',
-      'Horas laboradas (base)','Tiempo extra solicitado (min)','Tiempo extra solicitado (horas)','Tiempo extra autorizado (horas)','Total del día (horas)','Resultado tiempo extra','Hora de salida con tiempo extra','Comentario tiempo extra',
-      'Requiere autorización','Estado autorización','Comentario autorización','Comentarios']];
-    const autL={pendiente:'Pendiente',autorizada:'Autorizada',rechazada:'Rechazada'};
-    const push=(e,rec,day,i,marca)=>{
-      const hr=horasReales(rec, marca);
-      const acred = esDiaAcreditado(rec, marca);                 // vacaciones / permiso / incapacidad
-      const estadoTxt = marca? marca.label : ST_LBL[rec.status];
-      const fz=k=>{ if(acred) return 'Sistema'; const v=(rec.fuente||{})[k]; return v==='sistema'?'Sistema':(v?'Usuario':'—'); };
-      const teMin   = rec.otMin>0 ? Math.round(rec.otMin) : 0;
-      const teHoras = rec.otMin>0 ? Number((rec.otMin/60).toFixed(2)) : 0;
-      const teAut   = Number(extraContado(rec).toFixed(2));  // tiempo extra autorizado (los minutos que aprobó el supervisor)
-      const totalDia = Number(((hr!=null?hr:0) + teAut).toFixed(2));
-      const teRes = rec.otMin>0 ? (rec.otEstado==='aprobado'?'Autorizado (contabilizado)':rec.otEstado==='rechazado'?'Rechazado (no cuenta)':'Pendiente de autorización') : 'Sin tiempo extra';
-      const salExtra = (rec.otMin>0 && rec.otEstado==='aprobado') ? rec.salida : '—';
-      rows.push([e.nombre,e.nomina,e.pais,(e.clas==='operativo'?'Operativo':'Administrativo'),ymd(day),DIAS[i],estadoTxt,
-        rec.entrada,rec.iniComida,rec.finComida,rec.salida,
-        fz('entrada'),fz('iniComida'),fz('finComida'),fz('salida'),
-        (hr!=null?Number(hr.toFixed(2)):''),teMin,teHoras,teAut,totalDia,teRes,salExtra,(rec.otComentario||''),
-        (rec.reqAut?'Sí':'No'),(rec.reqAut?(autL[rec.autEstado||'pendiente']||rec.autEstado):'—'),(rec.autComentario||''),
-        (rec.comments||[]).map(c=>c.txt+' ('+c.by+')').join(' | ')]);
-    };
-    const tipoTxt = tipo&&tipo!=='todos' ? ' · Tipo: '+tipo : '';
-    const paisF=document.getElementById('fPais'); const paisTxt = (paisF&&paisF.value)? ' · País: '+paisF.value : '';
-    if(fecha){
-      const d=new Date(fecha+'T00:00:00'), mon=mondayOfDate(d), idx=(d.getDay()+6)%7, data=await ensureWeek(mon);
-      const cov=await coberturaSemana(mon);
-      regEmployees().forEach(e=>{
-        const rec=data[e.id][idx]; const marca=cov[e.id] && cov[e.id][fecha];
-        if(tipo!=='todos' && !marca && !rec[tipo]) return;       // filtro por tipo (vacaciones/ausencia siempre se incluyen)
-        if(!marca && rec.status==='pendiente') return;           // sin registro y sin cobertura → no aparece
-        push(e,rec,d,idx,marca);
-      });
-      subtitulo='Fecha: '+fecha+tipoTxt+paisTxt+' · '+genMsg;
-      fname='registros_'+fecha+'.xlsx';
-    } else {
-      const mon=mondayOf(curWeek), sun=new Date(mon); sun.setDate(mon.getDate()+6);
-      const data=await ensureWeek(mon);
-      const cov=await coberturaSemana(mon);
-      regEmployees().forEach(e=>data[e.id].forEach((rec,i)=>{
-        const day=new Date(mon); day.setDate(mon.getDate()+i); const ds=ymd(day);
-        const marca=cov[e.id] && cov[e.id][ds];
-        if(!marca && rec.status==='pendiente') return;           // incluye vacaciones/permiso/incapacidad aunque no haya registro
-        push(e,rec,day,i,marca);
-      }));
-      subtitulo='Semana del '+ymd(mon)+' al '+ymd(sun)+tipoTxt+paisTxt+' · '+genMsg;
-      fname='registros_semana_'+ymd(mon)+'.xlsx';
-    }
-    // anchos y formatos de las 25 columnas
-    colMeta=[{w:26},{w:11},{w:15},{w:14},{w:12},{w:7},{w:13},
-      {w:9},{w:12},{w:11},{w:9},
-      {w:15},{w:17},{w:17},{w:15},
-      {w:15,numFmt:'0.00'},{w:14,numFmt:'0'},{w:15,numFmt:'0.00'},{w:16,numFmt:'0.00'},{w:14,numFmt:'0.00'},{w:22},{w:20},{w:24},
-      {w:14},{w:16},{w:24},{w:30}];
-    grupos=[{label:'Identificación',span:4},{label:'Día',span:3},
-      {label:'Marcas del día',span:4},{label:'¿Quién registró?',span:4},
-      {label:'Horas y tiempo extra',span:8},{label:'Autorización',span:3},
-      {label:'Comentarios',span:1}];
+    const r = await construirFilasRegistro({
+      fecha:  document.getElementById('fFecha').value,
+      tipo:   document.getElementById('fTipo').value,
+      pais:   document.getElementById('fPais').value,
+      buscar: document.getElementById('fBuscar').value,
+      weekOffset: curWeek });
+    sheet=r.sheet; titulo=r.titulo; subtitulo=r.subtitulo; rows=r.rows; colMeta=r.colMeta; grupos=r.grupos; fname=r.fname;
   }
   await descargarLibro(sheet, titulo, subtitulo, rows, colMeta, fname, grupos);
+}
+// Construye las filas del reporte de registros (las MISMAS columnas que el Excel).
+// Devuelve {sheet,titulo,subtitulo,rows,meta,colMeta,grupos,fname}. meta[k] describe la fila rows[k+1].
+async function construirFilasRegistro({fecha, tipo, pais, buscar, weekOffset}){
+  const genMsg='Generado el '+new Date().toLocaleString('es-MX');
+  tipo = tipo || 'todos';
+  const q = norm(buscar||'');
+  const emps = visibleEmps().filter(e=>e.activo)
+      .filter(e=>!pais || e.pais===pais)
+      .filter(e=>!q || norm(e.nombre).includes(q) || e.nomina.includes(q));
+  const rows=[['Empleado','Nómina','País','Clasificación','Fecha','Día','Estado',
+    'Entrada','Inicio comida','Fin comida','Salida',
+    'Entrada registró','Inicio comida registró','Fin comida registró','Salida registró',
+    'Horas laboradas (base)','Tiempo extra solicitado (min)','Tiempo extra solicitado (horas)','Tiempo extra autorizado (horas)','Total del día (horas)','Resultado tiempo extra','Hora de salida con tiempo extra','Comentario tiempo extra',
+    'Requiere autorización','Estado autorización','Comentario autorización','Comentarios']];
+  const meta=[];
+  const autL={pendiente:'Pendiente',autorizada:'Autorizada',rechazada:'Rechazada'};
+  const push=(e,rec,day,i,marca,weekKey)=>{
+    const hr=horasReales(rec, marca);
+    const acred = esDiaAcreditado(rec, marca);                 // vacaciones / permiso / incapacidad
+    const estadoTxt = marca? marca.label : ST_LBL[rec.status];
+    const fz=k=>{ if(acred) return 'Sistema'; const v=(rec.fuente||{})[k]; return v==='sistema'?'Sistema':(v?'Usuario':'—'); };
+    const teMin   = rec.otMin>0 ? Math.round(rec.otMin) : 0;
+    const teHoras = rec.otMin>0 ? Number((rec.otMin/60).toFixed(2)) : 0;
+    const teAut   = Number(extraContado(rec).toFixed(2));
+    const totalDia = Number(((hr!=null?hr:0) + teAut).toFixed(2));
+    const teRes = rec.otMin>0 ? (rec.otEstado==='aprobado'?'Autorizado (contabilizado)':rec.otEstado==='rechazado'?'Rechazado (no cuenta)':'Pendiente de autorización') : 'Sin tiempo extra';
+    const salExtra = (rec.otMin>0 && rec.otEstado==='aprobado') ? rec.salida : '—';
+    rows.push([e.nombre,e.nomina,e.pais,(e.clas==='operativo'?'Operativo':'Administrativo'),ymd(day),DIAS[i],estadoTxt,
+      rec.entrada,rec.iniComida,rec.finComida,rec.salida,
+      fz('entrada'),fz('iniComida'),fz('finComida'),fz('salida'),
+      (hr!=null?Number(hr.toFixed(2)):''),teMin,teHoras,teAut,totalDia,teRes,salExtra,(rec.otComentario||''),
+      ((rec.reqAut||rec.salAnt)?'Sí':'No'),((rec.reqAut||rec.salAnt)?(autL[rec.autEstado||'pendiente']||rec.autEstado):'—'),(rec.autComentario||''),
+      (rec.comments||[]).map(c=>c.txt+' ('+c.by+')').join(' | ')]);
+    meta.push({empId:e.id, weekKey, dayIdx:i});
+  };
+  const tipoTxt = tipo&&tipo!=='todos' ? ' · Tipo: '+tipo : '';
+  const paisTxt = pais? ' · País: '+pais : '';
+  let subtitulo, fname;
+  if(fecha){
+    const d=new Date(fecha+'T00:00:00'), mon=mondayOfDate(d), idx=(d.getDay()+6)%7, data=await ensureWeek(mon);
+    const cov=await coberturaSemana(mon); const wk=ymd(mon);
+    emps.forEach(e=>{
+      const rec=data[e.id][idx]; const marca=cov[e.id] && cov[e.id][fecha];
+      if(tipo!=='todos' && !marca && !rec[tipo]) return;
+      if(!marca && rec.status==='pendiente') return;
+      push(e,rec,d,idx,marca,wk);
+    });
+    subtitulo='Fecha: '+fecha+tipoTxt+paisTxt+' · '+genMsg;
+    fname='registros_'+fecha+'.xlsx';
+  } else {
+    const mon=mondayOf(weekOffset||0), sun=new Date(mon); sun.setDate(mon.getDate()+6);
+    const data=await ensureWeek(mon);
+    const cov=await coberturaSemana(mon); const wk=ymd(mon);
+    emps.forEach(e=>data[e.id].forEach((rec,i)=>{
+      const day=new Date(mon); day.setDate(mon.getDate()+i); const ds=ymd(day);
+      const marca=cov[e.id] && cov[e.id][ds];
+      if(!marca && rec.status==='pendiente') return;
+      push(e,rec,day,i,marca,wk);
+    }));
+    subtitulo='Semana del '+ymd(mon)+' al '+ymd(sun)+tipoTxt+paisTxt+' · '+genMsg;
+    fname='registros_semana_'+ymd(mon)+'.xlsx';
+  }
+  const colMeta=[{w:26},{w:11},{w:15},{w:14},{w:12},{w:7},{w:13},
+    {w:9},{w:12},{w:11},{w:9},
+    {w:15},{w:17},{w:17},{w:15},
+    {w:15,numFmt:'0.00'},{w:14,numFmt:'0'},{w:15,numFmt:'0.00'},{w:16,numFmt:'0.00'},{w:14,numFmt:'0.00'},{w:22},{w:20},{w:24},
+    {w:14},{w:16},{w:24},{w:30}];
+  const grupos=[{label:'Identificación',span:4},{label:'Día',span:3},
+    {label:'Marcas del día',span:4},{label:'¿Quién registró?',span:4},
+    {label:'Horas y tiempo extra',span:8},{label:'Autorización',span:3},
+    {label:'Comentarios',span:1}];
+  return {sheet:'Registros', titulo:'SPIE · Registros de jornada', subtitulo, rows, meta, colMeta, grupos, fname};
+}
+// ---- Pestaña REPORTE: filtros, render (solo lectura) y descarga ----
+function repFiltros(){
+  return {
+    fecha:  (document.getElementById('rFecha')||{}).value||'',
+    tipo:   (document.getElementById('rTipo')||{}).value||'todos',
+    pais:   (document.getElementById('rPais')||{}).value||'',
+    buscar: (document.getElementById('rBuscar')||{}).value||'',
+    weekOffset: repWeek };
+}
+function repChangeWeek(d){ repWeek+=d; renderReporte(); }
+function buscarRep(){ clearTimeout(window._repDeb); window._repDeb=setTimeout(renderReporte, 250); }
+function repClearFilters(){
+  const set=(id,v)=>{ const el=document.getElementById(id); if(el) el.value=v; };
+  set('rPais',''); set('rBuscar',''); set('rTipo','todos'); set('rFecha',''); repWeek=0; renderReporte();
+}
+async function renderReporte(){
+  const f=repFiltros();
+  const nav=document.getElementById('rWkNav'); if(nav) nav.style.display = f.fecha?'none':'flex';
+  const tbl=document.getElementById('repTbl'); if(!tbl) return;
+  tbl.innerHTML='<tbody><tr><td style="padding:16px;color:var(--gray)">Cargando reporte…</td></tr></tbody>';
+  const r=await construirFilasRegistro(f);
+  // etiqueta de semana
+  if(!f.fecha){ const mon=mondayOf(repWeek), end=new Date(mon); end.setDate(mon.getDate()+6);
+    const lbl=document.getElementById('rWkLbl'); if(lbl) lbl.textContent='Semana del '+mon.getDate()+' '+mon.toLocaleDateString('es-MX',{month:'short'})+' al '+end.getDate()+' '+end.toLocaleDateString('es-MX',{month:'short',year:'numeric'}); }
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const hdrs=r.rows[0];
+  // encabezados de grupo (como en el Excel)
+  let gh='<tr class="rep-grp">';
+  (r.grupos||[]).forEach(g=>{ gh+='<th colspan="'+g.span+'">'+esc(g.label)+'</th>'; });
+  gh+='</tr>';
+  let head='<thead>'+gh+'<tr>'+hdrs.map((h,i)=>'<th'+(i<4?' class="name"':'')+'>'+esc(h)+'</th>').join('')+'</tr></thead>';
+  let body='<tbody>';
+  if(r.rows.length<=1){ body+='<tr><td colspan="'+hdrs.length+'" style="padding:16px;color:var(--gray)">Sin registros para los filtros seleccionados.</td></tr>'; }
+  r.rows.slice(1).forEach((row,k)=>{
+    const m=r.meta[k];
+    body+='<tr class="rep-row" onclick="openDet(\''+m.empId+'\',\''+m.weekKey+'\','+m.dayIdx+')" style="cursor:pointer">'
+      + row.map((v,ci)=>'<td'+(ci===0?' class="name"':'')+(ci>=15&&ci<=19?' style="text-align:right"':'')+'>'+esc(v==null||v===''?'—':v)+'</td>').join('')
+      + '</tr>';
+  });
+  body+='</tbody>';
+  tbl.innerHTML=head+body;
+}
+async function exportReporteExcel(){
+  if(typeof ExcelJS==='undefined'){ alert('No se pudo cargar la librería de Excel (revisa tu conexión a internet).'); return; }
+  const r=await construirFilasRegistro(repFiltros());
+  await descargarLibro(r.sheet, r.titulo, r.subtitulo, r.rows, r.colMeta, r.fname, r.grupos);
 }
 function _borde(){ const s={style:'thin',color:{argb:'FFD9DEE8'}}; return {top:s,left:s,right:s,bottom:s}; }
 async function descargarLibro(sheet, titulo, subtitulo, rows, colMeta, fname, groups){
