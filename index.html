@@ -202,12 +202,16 @@
   table.reg thead th{background:var(--paper);font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray);position:sticky;top:0}
   table.reg td.name,table.reg th.name{text-align:left;font-weight:650;white-space:nowrap;position:sticky;left:0;background:var(--white);z-index:1}
   table.reg thead th.name{background:var(--paper)}
-  /* Reporte (solo lectura): tabla ancha con columnas sin cortar y encabezados de grupo */
-  table.rep-tbl{min-width:1600px;font-size:12px}
-  table.rep-tbl th,table.rep-tbl td{white-space:nowrap;border-right:1px solid var(--line)}
-  table.rep-tbl thead tr.rep-grp th{background:var(--blue);color:#fff;font-size:10.5px;text-transform:none;letter-spacing:0;position:static;border-right:1px solid rgba(255,255,255,.25)}
+  /* Reporte (solo lectura): vista resumida y armoniosa */
+  table.rep-tbl{min-width:760px;font-size:13px}
+  table.rep-tbl th,table.rep-tbl td{white-space:nowrap;border-right:1px solid var(--line);vertical-align:top}
+  table.rep-tbl td.rep-marcas{text-align:left;white-space:normal;min-width:190px}
   table.rep-tbl tbody tr.rep-row:hover td{background:var(--blue-050)}
   table.rep-tbl tbody tr.rep-row:nth-child(even) td{background:var(--paper)}
+  .rep-mk{display:flex;justify-content:space-between;gap:12px;font-size:12.5px;line-height:1.55}
+  .rep-mk span{color:var(--gray)}
+  .rep-mk b{color:var(--blue);font-variant-numeric:tabular-nums}
+  .rep-estado{display:inline-block;font-size:12px;color:var(--gray);font-style:italic}
   .cell{display:inline-flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;padding:4px 6px;border-radius:8px;min-width:56px}
   .cell:hover{background:var(--paper)}
   .st-dot{width:10px;height:10px;border-radius:50%}
@@ -423,10 +427,7 @@
           <button id="subVac" onclick="admSub('vac')">Vacaciones</button>
           <button id="subGrp" onclick="admSub('grp')">Grupos<span id="badgeGrp" class="pend-badge"></span></button>
         </div>
-        <div class="admin-actions">
-          <button class="btn green" onclick="exportExcel()">⬇ Exportar a Excel</button>
-          <button class="btn ghost" onclick="exportTecnicoPanel()">⬇ Jornada del técnico</button>
-        </div>
+        <div class="admin-actions"></div>
       </div>
 
       <!-- ---- SUB-VISTA: REGISTROS ---- -->
@@ -486,6 +487,7 @@
           </div>
           <button class="btn ghost" style="padding:9px 14px" onclick="repClearFilters()">Limpiar</button>
           <button class="btn green" style="padding:9px 14px" onclick="exportReporteExcel()">⬇ Descargar Excel</button>
+          <button class="btn ghost" style="padding:9px 14px" onclick="exportTecnicoPanel()">⬇ Jornada del técnico</button>
         </div>
         <div class="muted-note" style="margin:2px 0 10px">Vista de solo lectura. El reporte muestra lo mismo que el Excel; para ver el detalle o agregar un comentario, toca una fila.</div>
         <div class="tbl-wrap" style="overflow:auto;max-height:66vh"><table class="reg rep-tbl" id="repTbl"></table></div>
@@ -543,6 +545,7 @@
             <button class="btn primary" style="padding:9px 14px;width:auto" onclick="openEmpForm(null)">＋ Alta individual</button>
             <button class="btn ghost" style="padding:9px 14px" onclick="openBulk()">Alta grupal (CSV)</button>
           </span>
+          <button class="btn green" style="padding:9px 14px" onclick="exportExcel()">⬇ Descargar Excel</button>
         </div>
         <div class="tbl-wrap"><table class="reg" id="empTbl"></table></div>
       </div>
@@ -823,7 +826,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Intenta restaurar la sesión si sigue vigente (refrescar no cierra sesión dentro de los 15 min)
   try{ intentarRestaurarSesion(); }catch(e){ console.warn('restaurar sesión', e); }
 });
-const APP_VERSION='v28 · 27-nov-2026 (Nueva pestaña Reporte: vista del Excel, solo lectura, con descarga)';
+const APP_VERSION='v29 · 27-nov-2026 (Reporte: vista resumida con marcas etiquetadas; descargas movidas al Reporte)';
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
 function hoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -3756,6 +3759,11 @@ function repFiltros(){
     buscar: (document.getElementById('rBuscar')||{}).value||'',
     weekOffset: repWeek };
 }
+function repEmployees(){
+  const pais=(document.getElementById('rPais')||{}).value||'';
+  const q=norm((document.getElementById('rBuscar')||{}).value||'');
+  return visibleEmps().filter(e=>e.activo).filter(e=>!pais||e.pais===pais).filter(e=>!q||norm(e.nombre).includes(q)||e.nomina.includes(q));
+}
 function repChangeWeek(d){ repWeek+=d; renderReporte(); }
 function buscarRep(){ clearTimeout(window._repDeb); window._repDeb=setTimeout(renderReporte, 250); }
 function repClearFilters(){
@@ -3772,18 +3780,28 @@ async function renderReporte(){
   if(!f.fecha){ const mon=mondayOf(repWeek), end=new Date(mon); end.setDate(mon.getDate()+6);
     const lbl=document.getElementById('rWkLbl'); if(lbl) lbl.textContent='Semana del '+mon.getDate()+' '+mon.toLocaleDateString('es-MX',{month:'short'})+' al '+end.getDate()+' '+end.toLocaleDateString('es-MX',{month:'short',year:'numeric'}); }
   const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  const hdrs=r.rows[0];
-  // encabezados de grupo (como en el Excel)
-  let gh='<tr class="rep-grp">';
-  (r.grupos||[]).forEach(g=>{ gh+='<th colspan="'+g.span+'">'+esc(g.label)+'</th>'; });
-  gh+='</tr>';
-  let head='<thead>'+gh+'<tr>'+hdrs.map((h,i)=>'<th'+(i<4?' class="name"':'')+'>'+esc(h)+'</th>').join('')+'</tr></thead>';
+  // VISTA EN PANTALLA (resumida y armoniosa): Nómina, Nombre, País, Clasificación, Fecha, Día y las marcas etiquetadas.
+  // (La DESCARGA conserva la estructura completa del Excel mediante construirFilasRegistro.)
+  const COLS=['Nómina','Nombre','País','Clasificación','Fecha','Día','Registros del día'];
+  let head='<thead><tr>'+COLS.map((h,i)=>'<th'+(i===1?' class="name"':'')+'>'+esc(h)+'</th>').join('')+'</tr></thead>';
   let body='<tbody>';
-  if(r.rows.length<=1){ body+='<tr><td colspan="'+hdrs.length+'" style="padding:16px;color:var(--gray)">Sin registros para los filtros seleccionados.</td></tr>'; }
+  if(r.rows.length<=1){ body+='<tr><td colspan="'+COLS.length+'" style="padding:16px;color:var(--gray)">Sin registros para los filtros seleccionados.</td></tr>'; }
   r.rows.slice(1).forEach((row,k)=>{
     const m=r.meta[k];
+    // columnas de origen: 0 Nombre, 1 Nómina, 2 País, 3 Clasificación, 4 Fecha(YYYY-MM-DD), 5 Día, 6 Estado, 7 Entrada, 8 Inicio comida, 9 Fin comida, 10 Salida
+    const times=[['Entrada',row[7]],['Inicio comida',row[8]],['Fin comida',row[9]],['Salida',row[10]]];
+    const anyTime=times.some(t=>t[1]);
+    const marcas = anyTime
+      ? times.map(([l,v])=>'<div class="rep-mk"><span>'+l+':</span> <b>'+(v?esc(v):'—')+'</b></div>').join('')
+      : '<span class="rep-estado">'+esc(row[6]||'—')+'</span>';
     body+='<tr class="rep-row" onclick="openDet(\''+m.empId+'\',\''+m.weekKey+'\','+m.dayIdx+')" style="cursor:pointer">'
-      + row.map((v,ci)=>'<td'+(ci===0?' class="name"':'')+(ci>=15&&ci<=19?' style="text-align:right"':'')+'>'+esc(v==null||v===''?'—':v)+'</td>').join('')
+      + '<td>'+esc(row[1])+'</td>'
+      + '<td class="name">'+esc(row[0])+'</td>'
+      + '<td>'+esc(row[2])+'</td>'
+      + '<td>'+esc(row[3])+'</td>'
+      + '<td>'+esc(fFecha(row[4])||row[4])+'</td>'
+      + '<td>'+esc(row[5])+'</td>'
+      + '<td class="rep-marcas">'+marcas+'</td>'
       + '</tr>';
   });
   body+='</tbody>';
@@ -3879,12 +3897,12 @@ async function exportTecnicoMiDia(){
 async function exportTecnicoPanel(){
   if(typeof ExcelJS==='undefined'){ alert('No se pudo cargar la librería de Excel (revisa tu conexión).'); return; }
   const rows=[['Empleado','Nómina','País','Grupo','Fecha','Día','Tipo de tiempo','Etapa de la reparación','Proyecto','Turbina','Pala','Concha','Radio','Inicio','Fin','Duración (min)','Descripción']];
-  const mon=mondayOf(curWeek), sun=new Date(mon); sun.setDate(mon.getDate()+6);
+  const mon=mondayOf(repWeek), sun=new Date(mon); sun.setDate(mon.getDate()+6);
   const data=await ensureWeek(mon);
   // grupos: cada miembro comparte la captura del registrador → se unifican todos los técnicos
   const grupos=await DB.cargarGrupos();
   const grupoDe={}; grupos.forEach(g=>(g.miembros||[]).forEach(id=>{ grupoDe[id]=g; }));
-  regEmployees().forEach(e=>{
+  repEmployees().forEach(e=>{
     const g=grupoDe[e.id];
     const regId = g? g.registradorId : e.id;
     const fuenteRec = (g && regId!==e.id && data[regId]) ? data[regId] : data[e.id];
