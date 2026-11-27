@@ -202,13 +202,14 @@
   table.reg thead th{background:var(--paper);font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray);position:sticky;top:0}
   table.reg td.name,table.reg th.name{text-align:left;font-weight:650;white-space:nowrap;position:sticky;left:0;background:var(--white);z-index:1}
   table.reg thead th.name{background:var(--paper)}
-  /* Reporte (solo lectura): vista resumida y armoniosa */
-  table.rep-tbl{min-width:760px;font-size:13px}
+  /* Reporte (solo lectura): cuadrícula semanal con marcas etiquetadas por día */
+  table.rep-tbl{min-width:1400px;font-size:13px}
   table.rep-tbl th,table.rep-tbl td{white-space:nowrap;border-right:1px solid var(--line);vertical-align:top}
-  table.rep-tbl td.rep-marcas{text-align:left;white-space:normal;min-width:190px}
-  table.rep-tbl tbody tr.rep-row:hover td{background:var(--blue-050)}
-  table.rep-tbl tbody tr.rep-row:nth-child(even) td{background:var(--paper)}
-  .rep-mk{display:flex;justify-content:space-between;gap:12px;font-size:12.5px;line-height:1.55}
+  table.rep-tbl td.rep-marcas{text-align:left;white-space:normal;min-width:150px;padding:8px 10px}
+  table.rep-tbl td.rep-marcas[onclick]:hover{background:var(--blue-050)}
+  table.rep-tbl tbody tr:nth-child(even) td{background:var(--paper)}
+  table.rep-tbl tbody tr:nth-child(even) td.name{background:#eef1f7}
+  .rep-mk{display:flex;justify-content:space-between;gap:10px;font-size:12px;line-height:1.5}
   .rep-mk span{color:var(--gray)}
   .rep-mk b{color:var(--blue);font-variant-numeric:tabular-nums}
   .rep-estado{display:inline-block;font-size:12px;color:var(--gray);font-style:italic}
@@ -471,15 +472,6 @@
         <div class="filters">
           <select id="rPais" onchange="renderReporte()"></select>
           <input type="text" id="rBuscar" placeholder="Buscar por nombre o número de nómina…" oninput="buscarRep()">
-          <select id="rTipo" onchange="renderReporte()">
-            <option value="todos">Tipo de registro: todos</option>
-            <option value="entrada">Entrada</option>
-            <option value="iniComida">Inicio de comida</option>
-            <option value="finComida">Fin de comida</option>
-            <option value="salida">Salida</option>
-          </select>
-          <span class="fl-lbl">Fecha:</span>
-          <input type="date" id="rFecha" onchange="renderReporte()">
           <div class="wk-nav" id="rWkNav">
             <button onclick="repChangeWeek(-1)">‹</button>
             <span class="lbl" id="rWkLbl"></span>
@@ -489,7 +481,7 @@
           <button class="btn green" style="padding:9px 14px" onclick="exportReporteExcel()">⬇ Descargar Excel</button>
           <button class="btn ghost" style="padding:9px 14px" onclick="exportTecnicoPanel()">⬇ Jornada del técnico</button>
         </div>
-        <div class="muted-note" style="margin:2px 0 10px">Vista de solo lectura. El reporte muestra lo mismo que el Excel; para ver el detalle o agregar un comentario, toca una fila.</div>
+        <div class="muted-note" style="margin:2px 0 10px">Vista de solo lectura, por semana. Para ver el detalle de un día o agregar un comentario, toca la celda. La descarga del Excel conserva la estructura completa.</div>
         <div class="tbl-wrap" style="overflow:auto;max-height:66vh"><table class="reg rep-tbl" id="repTbl"></table></div>
       </div>
 
@@ -826,7 +818,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Intenta restaurar la sesión si sigue vigente (refrescar no cierra sesión dentro de los 15 min)
   try{ intentarRestaurarSesion(); }catch(e){ console.warn('restaurar sesión', e); }
 });
-const APP_VERSION='v29 · 27-nov-2026 (Reporte: vista resumida con marcas etiquetadas; descargas movidas al Reporte)';
+const APP_VERSION='v30 · 27-nov-2026 (Reporte en cuadrícula semanal con marcas etiquetadas por día)';
 
 /* fecha de hoy en formato YYYY-MM-DD (local) */
 function hoyISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -3753,8 +3745,8 @@ async function construirFilasRegistro({fecha, tipo, pais, buscar, weekOffset}){
 // ---- Pestaña REPORTE: filtros, render (solo lectura) y descarga ----
 function repFiltros(){
   return {
-    fecha:  (document.getElementById('rFecha')||{}).value||'',
-    tipo:   (document.getElementById('rTipo')||{}).value||'todos',
+    fecha:  '',           // el Reporte es por semana (cuadrícula de 7 días)
+    tipo:   'todos',
     pais:   (document.getElementById('rPais')||{}).value||'',
     buscar: (document.getElementById('rBuscar')||{}).value||'',
     weekOffset: repWeek };
@@ -3768,41 +3760,55 @@ function repChangeWeek(d){ repWeek+=d; renderReporte(); }
 function buscarRep(){ clearTimeout(window._repDeb); window._repDeb=setTimeout(renderReporte, 250); }
 function repClearFilters(){
   const set=(id,v)=>{ const el=document.getElementById(id); if(el) el.value=v; };
-  set('rPais',''); set('rBuscar',''); set('rTipo','todos'); set('rFecha',''); repWeek=0; renderReporte();
+  set('rPais',''); set('rBuscar',''); repWeek=0; renderReporte();
 }
 async function renderReporte(){
-  const f=repFiltros();
-  const nav=document.getElementById('rWkNav'); if(nav) nav.style.display = f.fecha?'none':'flex';
   const tbl=document.getElementById('repTbl'); if(!tbl) return;
   tbl.innerHTML='<tbody><tr><td style="padding:16px;color:var(--gray)">Cargando reporte…</td></tr></tbody>';
-  const r=await construirFilasRegistro(f);
-  // etiqueta de semana
-  if(!f.fecha){ const mon=mondayOf(repWeek), end=new Date(mon); end.setDate(mon.getDate()+6);
-    const lbl=document.getElementById('rWkLbl'); if(lbl) lbl.textContent='Semana del '+mon.getDate()+' '+mon.toLocaleDateString('es-MX',{month:'short'})+' al '+end.getDate()+' '+end.toLocaleDateString('es-MX',{month:'short',year:'numeric'}); }
   const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  // VISTA EN PANTALLA (resumida y armoniosa): Nómina, Nombre, País, Clasificación, Fecha, Día y las marcas etiquetadas.
+  const mon=mondayOf(repWeek);
+  const data=await ensureWeek(mon);
+  const cov=await coberturaSemana(mon);
+  let fest=[]; try{ fest=await DB.cargarFestivos(); }catch(e){}
+  const festKey=new Set((fest||[]).map(f=>f.pais+'|'+f.fecha));
+  // etiqueta de semana
+  const end=new Date(mon); end.setDate(mon.getDate()+6);
+  const lbl=document.getElementById('rWkLbl'); if(lbl) lbl.textContent='Semana del '+mon.getDate()+' '+mon.toLocaleDateString('es-MX',{month:'short'})+' al '+end.getDate()+' '+end.toLocaleDateString('es-MX',{month:'short',year:'numeric'});
+  // VISTA EN PANTALLA: cuadrícula semanal (una fila por empleado; 7 columnas de días con las marcas etiquetadas).
   // (La DESCARGA conserva la estructura completa del Excel mediante construirFilasRegistro.)
-  const COLS=['Nómina','Nombre','País','Clasificación','Fecha','Día','Registros del día'];
-  let head='<thead><tr>'+COLS.map((h,i)=>'<th'+(i===1?' class="name"':'')+'>'+esc(h)+'</th>').join('')+'</tr></thead>';
+  const DIAS_LARGO=['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
+  let head='<thead><tr><th class="name">Empleado</th><th>País</th><th>Clasificación</th>';
+  for(let i=0;i<7;i++){ const day=new Date(mon); day.setDate(mon.getDate()+i);
+    head+='<th>'+DIAS_LARGO[i]+'<br><span style="font-weight:600">'+day.getDate()+' '+day.toLocaleDateString('es-MX',{month:'short'})+'</span></th>'; }
+  head+='</tr></thead>';
+  const emps=repEmployees();
   let body='<tbody>';
-  if(r.rows.length<=1){ body+='<tr><td colspan="'+COLS.length+'" style="padding:16px;color:var(--gray)">Sin registros para los filtros seleccionados.</td></tr>'; }
-  r.rows.slice(1).forEach((row,k)=>{
-    const m=r.meta[k];
-    // columnas de origen: 0 Nombre, 1 Nómina, 2 País, 3 Clasificación, 4 Fecha(YYYY-MM-DD), 5 Día, 6 Estado, 7 Entrada, 8 Inicio comida, 9 Fin comida, 10 Salida
-    const times=[['Entrada',row[7]],['Inicio comida',row[8]],['Fin comida',row[9]],['Salida',row[10]]];
-    const anyTime=times.some(t=>t[1]);
-    const marcas = anyTime
-      ? times.map(([l,v])=>'<div class="rep-mk"><span>'+l+':</span> <b>'+(v?esc(v):'—')+'</b></div>').join('')
-      : '<span class="rep-estado">'+esc(row[6]||'—')+'</span>';
-    body+='<tr class="rep-row" onclick="openDet(\''+m.empId+'\',\''+m.weekKey+'\','+m.dayIdx+')" style="cursor:pointer">'
-      + '<td>'+esc(row[1])+'</td>'
-      + '<td class="name">'+esc(row[0])+'</td>'
-      + '<td>'+esc(row[2])+'</td>'
-      + '<td>'+esc(row[3])+'</td>'
-      + '<td>'+esc(fFecha(row[4])||row[4])+'</td>'
-      + '<td>'+esc(row[5])+'</td>'
-      + '<td class="rep-marcas">'+marcas+'</td>'
-      + '</tr>';
+  if(!emps.length){ body+='<tr><td class="name">—</td><td colspan="9" style="color:var(--gray)">Sin empleados para los filtros.</td></tr>'; }
+  const wk=ymd(mon);
+  emps.forEach(e=>{
+    body+='<tr><td class="name">'+esc(e.nombre)+'<br><span style="font-size:11px;color:var(--gray);font-weight:500">Nómina '+esc(e.nomina)+' · '+esc(e.pais)+'</span></td>'
+      + '<td>'+esc(e.pais)+'</td><td>'+(e.clas==='operativo'?'Operativo':'Administrativo')+'</td>';
+    (data[e.id]||[]).forEach((rec,i)=>{
+      const day=new Date(mon); day.setDate(mon.getDate()+i); const ds=ymd(day);
+      const marca=cov[e.id] && cov[e.id][ds];
+      const esFest=festKey.has(e.pais+'|'+ds);
+      let cell, clickable=false;
+      if(marca){
+        const acred=esDiaAcreditado(null, marca);
+        cell='<span class="rep-estado">'+esc(marca.label)+(acred?' · '+HORAS_AUSENCIA.toFixed(0)+' h':'')+'</span>';
+        clickable = rec.status!=='pendiente';
+      } else if(rec.status==='pendiente'){
+        cell= esFest? '<span class="rep-estado">🎌 Festivo</span>' : '<span class="rep-estado" style="opacity:.6">Sin registro</span>';
+      } else {
+        const pend = (rec.reqAut||rec.salAnt) && rec.autEstado!=='autorizada';
+        const times=[['Entrada',rec.entrada],['Inicio comida',rec.iniComida],['Fin comida',rec.finComida],['Salida',rec.salida]];
+        cell=times.map(([l,v])=>'<div class="rep-mk"><span>'+l+':</span> <b>'+(v?esc(v):'—')+'</b></div>').join('')
+           + (pend?'<div class="rep-mk" style="margin-top:2px"><span class="chip amber" style="font-size:10px">Pendiente de aprobación</span></div>':'');
+        clickable=true;
+      }
+      body+='<td class="rep-marcas"'+(clickable?(' onclick="openDet(\''+e.id+'\',\''+wk+'\','+i+')" style="cursor:pointer"'):'')+'>'+cell+'</td>';
+    });
+    body+='</tr>';
   });
   body+='</tbody>';
   tbl.innerHTML=head+body;
